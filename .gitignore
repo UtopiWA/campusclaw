@@ -1,0 +1,12 @@
+.env
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/.npm-cache/
+backend/target/
+backend/.m2-repository/
+uploads/
+*.log
+.idea/
+.vscode/
+.docker-config/

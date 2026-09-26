@@ -1,0 +1,41 @@
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${COOKIE_SECURE:false}
+
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      connection-timeout: 3000
+      validation-timeout: 2000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  servlet:
+    multipart:
+      max-file-size: ${MAX_UPLOAD_BYTES:2097152}
+      max-request-size: ${MAX_UPLOAD_BYTES:2097152}
+
+app:
+  upload-dir: ${UPLOAD_DIR:./uploads}
+  max-upload-bytes: ${MAX_UPLOAD_BYTES:2097152}
+  demo-seed:
+    enabled: ${DEMO_SEED_ENABLED:false}
+    password: ${DEMO_SEED_PASSWORD:}
