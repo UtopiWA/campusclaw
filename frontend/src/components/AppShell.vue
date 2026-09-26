@@ -12,6 +12,7 @@ const router = useRouter()
 const isTeacher = computed(() => authState.user?.role === 'teacher')
 const roleLabel = computed(() => isTeacher.value ? '教师' : '学生')
 
+// One role-aware definition keeps the shared shell stable; entries without `to` reserve future course modules.
 const navItems = computed(() => isTeacher.value
   ? [
       { key: 'home', label: '教师首页', icon: 'home' },

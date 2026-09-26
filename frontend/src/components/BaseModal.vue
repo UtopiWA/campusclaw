@@ -16,6 +16,7 @@ function handleKeydown(event) {
   if (event.key === 'Escape') emit('close')
 }
 
+// Give keyboard users an immediate dialog focus target and clean up the global Escape listener.
 onMounted(async () => {
   window.addEventListener('keydown', handleKeydown)
   await nextTick()

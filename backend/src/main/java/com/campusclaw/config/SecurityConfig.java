@@ -50,11 +50,13 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, SecurityContextRepository contextRepository)
             throws Exception {
+        // The SPA reads the CSRF cookie and echoes it in a request header; the session cookie remains HttpOnly.
         CookieCsrfTokenRepository csrfRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrfRepository.setCookiePath("/");
         CsrfTokenRequestAttributeHandler csrfHandler = new CsrfTokenRequestAttributeHandler();
         csrfHandler.setCsrfRequestAttributeName(null);
 
+        // Login explicitly saves a minimal principal, while every other API requires the server-side session.
         http
                 .securityContext(context -> context
                         .securityContextRepository(contextRepository)
@@ -85,4 +87,3 @@ public class SecurityConfig {
         response.getWriter().write("{\"error\":\"" + message + "\"}");
     }
 }
-

@@ -1,4 +1,5 @@
 <script setup>
+// Centralize the small inline SVG set so navigation and actions need no additional icon dependency.
 defineProps({
   name: { type: String, required: true },
   size: { type: [Number, String], default: 20 },

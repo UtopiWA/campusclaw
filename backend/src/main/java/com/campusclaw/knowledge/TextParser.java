@@ -9,11 +9,13 @@ import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Component;
 
+/** Validates uploaded text and splits it into deterministic, Unicode-safe knowledge chunks. */
 @Component
 public class TextParser {
     static final int MAX_CHUNK_CODE_POINTS = 1000;
 
     public List<String> parse(byte[] bytes) {
+        // Normalize line endings before using blank lines as paragraph boundaries.
         String text = decodeUtf8(bytes).replace("\r\n", "\n").replace('\r', '\n').trim();
         if (text.isBlank()) {
             throw new BadRequestException("File must contain non-whitespace text");
@@ -47,6 +49,7 @@ public class TextParser {
         }
         int start = 0;
         while (start < paragraph.length()) {
+            // Count code points rather than UTF-16 chars so surrogate pairs are never split in half.
             int remainingCodePoints = paragraph.codePointCount(start, paragraph.length());
             int count = Math.min(MAX_CHUNK_CODE_POINTS, remainingCodePoints);
             int end = paragraph.offsetByCodePoints(start, count);
@@ -58,4 +61,3 @@ public class TextParser {
         }
     }
 }
-

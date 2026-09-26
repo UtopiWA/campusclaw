@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+/** HTTP endpoints for class-scoped material metadata and original file transfer. */
 @RestController
 @RequestMapping("/api/materials")
 public class MaterialController {
@@ -75,11 +76,13 @@ public class MaterialController {
     }
 
     private ResponseEntity<byte[]> fileResponse(Long id, boolean download) {
+        // Preview and download share the same authorization path; only Content-Disposition differs.
         MaterialService.MaterialFile file = materials.readFile(id, currentUsers.requireUser());
         String filename = file.filename() == null || file.filename().isBlank() ? "material.txt" : file.filename();
         ContentDisposition disposition = download
                 ? ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build()
                 : ContentDisposition.inline().filename(filename, StandardCharsets.UTF_8).build();
+        // Markdown is intentionally served as plain text so the browser never executes uploaded content.
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())

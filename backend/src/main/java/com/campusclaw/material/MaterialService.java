@@ -28,6 +28,10 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
+/**
+ * Coordinates material metadata, parsed knowledge entries and files on disk while enforcing class isolation.
+ * Filesystem changes are paired with transaction callbacks so a database rollback does not leave orphaned files.
+ */
 @Service
 public class MaterialService {
     private static final Logger log = LoggerFactory.getLogger(MaterialService.class);
@@ -65,6 +69,7 @@ public class MaterialService {
     @Transactional(readOnly = true)
     public MaterialFile readFile(Long id, UserAccount user) {
         Material material = requireMaterial(id, user.getClassId());
+        // Resolve the persisted relative path inside the current class directory before touching the filesystem.
         Path storedFile = resolveStoredPath(material.getStoredPath(), user.getClassId());
         if (storedFile == null || !Files.isRegularFile(storedFile, LinkOption.NOFOLLOW_LINKS)) {
             throw new NotFoundException();
@@ -94,6 +99,7 @@ public class MaterialService {
         Path temp = null;
         Path destination = null;
         try {
+            // Stage bytes first; the final class-scoped name is not exposed until parsing and persistence succeed.
             Path tempDir = uploadRoot.resolve(".tmp");
             Path classDir = uploadRoot.resolve(teacher.getClassId().toString());
             Files.createDirectories(tempDir);
@@ -105,6 +111,7 @@ public class MaterialService {
             destination = classDir.resolve(storedName).normalize();
             requireWithinRoot(destination);
 
+            // Material metadata and searchable chunks share one database transaction.
             Material material = materials.saveAndFlush(new Material(
                     teacher.getClassId(), content.title(), content.originalFilename(), null, teacher.getId()));
             for (int index = 0; index < chunks.size(); index++) {
@@ -112,6 +119,7 @@ public class MaterialService {
             }
             knowledgeEntries.flush();
 
+            // Publish the file atomically, then register rollback cleanup for the remaining transaction lifetime.
             moveAtomically(temp, destination);
             material.setStoredPath(toStoredPath(destination));
             material.setFileSizeBytes((long) content.bytes().length);
@@ -136,6 +144,7 @@ public class MaterialService {
         Path quarantined = null;
         try {
             if (original != null && Files.exists(original)) {
+                // Quarantine first so the file can be restored if the following database delete rolls back.
                 Path trashDir = uploadRoot.resolve(".trash");
                 Files.createDirectories(trashDir);
                 quarantined = trashDir.resolve(UUID.randomUUID() + ".deleted");
@@ -154,6 +163,7 @@ public class MaterialService {
     }
 
     private Material requireMaterial(Long id, Long classId) {
+        // The combined lookup deliberately returns 404 for both missing and cross-class records.
         return materials.findByIdAndClassId(id, classId).orElseThrow(NotFoundException::new);
     }
 
@@ -189,6 +199,7 @@ public class MaterialService {
     }
 
     private String safeOriginalFilename(String value) {
+        // Browsers may submit a client-side path; retain only the basename and reject unsafe control characters.
         String candidate = value == null ? "" : value.replace('\\', '/');
         int slash = candidate.lastIndexOf('/');
         candidate = slash >= 0 ? candidate.substring(slash + 1) : candidate;
@@ -225,6 +236,7 @@ public class MaterialService {
         if (resolved == null) {
             return null;
         }
+        // A valid upload-root path is still rejected when it belongs to another class directory.
         Path classRoot = uploadRoot.resolve(classId.toString()).normalize();
         if (!resolved.startsWith(classRoot)) {
             throw new NotFoundException();
@@ -239,6 +251,7 @@ public class MaterialService {
     }
 
     private void registerUploadCleanup(Path temp, Path destination) {
+        // Database rollback must remove a file that was already atomically published.
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCompletion(int status) {
@@ -251,6 +264,7 @@ public class MaterialService {
     }
 
     private void registerDeleteCompensation(Path original, Path quarantined) {
+        // Commit makes quarantine permanent; rollback restores the original file in place.
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCompletion(int status) {

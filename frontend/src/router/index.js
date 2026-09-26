@@ -14,6 +14,7 @@ const router = createRouter({
 })
 
 export async function authGuard(to) {
+  // This guard provides navigation UX; the backend remains the authoritative access-control boundary.
   if (!authState.loaded) {
     await loadCurrentUser()
   }

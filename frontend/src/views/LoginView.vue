@@ -12,6 +12,7 @@ const route = useRoute()
 const router = useRouter()
 
 async function submit() {
+  // Successful login returns to the route captured by the guard, or enters the material workspace by default.
   error.value = ''
   busy.value = true
   try {

@@ -10,6 +10,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
+/** Resolves the minimal session principal into the current database-backed user and class context. */
 @Service
 public class CurrentUserService {
     private final UserAccountRepository users;
@@ -21,6 +22,7 @@ public class CurrentUserService {
     }
 
     public UserAccount requireUser() {
+        // Reloading on every request makes account disablement and role/class changes effective immediately.
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !authentication.isAuthenticated()
                 || !(authentication.getPrincipal() instanceof SessionPrincipal principal)) {
@@ -48,4 +50,3 @@ public class CurrentUserService {
     public record CurrentUserView(Long id, String username, String role, Long classId, String className) {
     }
 }
-

@@ -36,6 +36,7 @@ public class DemoSeedService {
 
     @Transactional
     public void seed(String password) {
+        // Every lookup is idempotent so restarting a demo environment does not duplicate fixtures.
         ClassRoom classA = classRooms.findByName("班级 A").orElseGet(() -> classRooms.save(new ClassRoom("班级 A")));
         ClassRoom classB = classRooms.findByName("班级 B").orElseGet(() -> classRooms.save(new ClassRoom("班级 B")));
 
@@ -74,4 +75,3 @@ public class DemoSeedService {
         });
     }
 }
-

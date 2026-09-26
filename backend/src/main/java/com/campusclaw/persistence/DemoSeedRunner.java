@@ -20,6 +20,7 @@ public class DemoSeedRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        // Demo data is opt-in, and its credential must come from configuration rather than source code.
         String password = properties.demoSeed().password();
         if (!StringUtils.hasText(password)) {
             throw new IllegalStateException("DEMO_SEED_PASSWORD is required when DEMO_SEED_ENABLED=true");
@@ -27,4 +28,3 @@ public class DemoSeedRunner implements ApplicationRunner {
         seedService.seed(password);
     }
 }
-

@@ -26,6 +26,7 @@ const deleteOpen = ref(false)
 
 const isTeacher = computed(() => authState.user?.role === 'teacher')
 const fileCount = computed(() => materials.value.filter((material) => material.hasFile).length)
+// Filtering stays client-side because the lesson-sized material list is already scoped by class on the server.
 const filteredMaterials = computed(() => {
   const keyword = query.value.trim().toLocaleLowerCase('zh-CN')
   if (!keyword) return materials.value
@@ -68,6 +69,7 @@ async function upload() {
   const data = new FormData()
   data.append('file', selectedFile.value)
   try {
+    // The backend validates, stores and parses the file as one coordinated operation.
     await apiRequest('/api/materials/upload', { method: 'POST', body: data })
     uploadOpen.value = false
     selectedFile.value = null
@@ -89,6 +91,7 @@ async function viewMaterial(material) {
   viewLoading.value = true
   error.value = ''
   try {
+    // Render the server's plain-text response in <pre>; uploaded Markdown is never injected as HTML.
     previewContent.value = await apiRequest(`/api/materials/${material.id}/content`, { responseType: 'text' })
   } catch (exception) {
     viewOpen.value = false
@@ -103,6 +106,7 @@ async function downloadMaterial(material) {
   downloadBusyId.value = material.id
   error.value = ''
   try {
+    // Fetch through the authenticated API, then expose the Blob only long enough to trigger a browser download.
     const blob = await apiRequest(`/api/materials/${material.id}/download`, { responseType: 'blob' })
     const href = URL.createObjectURL(blob)
     const anchor = document.createElement('a')

@@ -54,6 +54,7 @@ public class AuthController {
                     UsernamePasswordAuthenticationToken.unauthenticated(body.username(), body.password()));
             UserPrincipal verifiedUser = (UserPrincipal) verified.getPrincipal();
 
+            // Rotate an existing ID after authentication to prevent session fixation.
             HttpSession existing = request.getSession(false);
             if (existing != null) {
                 request.changeSessionId();
@@ -61,6 +62,7 @@ public class AuthController {
                 request.getSession(true);
             }
 
+            // Persist only the stable user ID; role, enabled state and class membership are reloaded per request.
             Authentication sessionAuthentication = UsernamePasswordAuthenticationToken.authenticated(
                     new SessionPrincipal(verifiedUser.userId()), null, List.of());
             SecurityContext context = SecurityContextHolder.createEmptyContext();

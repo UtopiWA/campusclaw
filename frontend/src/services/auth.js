@@ -7,6 +7,7 @@ export const authState = reactive({
 })
 
 export async function loadCurrentUser(force = false) {
+  // Reuse the resolved session during navigation unless a caller explicitly requests revalidation.
   if (authState.loaded && !force) {
     return authState.user
   }
@@ -47,6 +48,6 @@ export function clearAuthentication() {
 }
 
 if (typeof window !== 'undefined') {
+  // Any API-level 401 invalidates the shared client state, not just the request that observed it.
   window.addEventListener('campusclaw:unauthorized', clearAuthentication)
 }
-

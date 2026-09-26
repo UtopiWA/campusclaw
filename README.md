@@ -1,8 +1,8 @@
 # CampusClaw
 
-- **价值主张：**把分散的校本教学材料沉淀为按班级隔离、可持续复用的教研知识资产。
-- **核心场景：**教师和学生登录后在本班空间协作，教师上传和管理教学材料并入库，同班师生在线查看或下载原文件，学生保持只读。
-- **本学期不做：**检索问答、AI 对话助手、作业提交与批改、注册与找回密码、SSO、多校多租户及生产级高可用。
+- **价值主张：** 把分散的校本教学材料沉淀为按班级隔离、可持续复用的教研知识资产。
+- **核心场景：** 教师和学生登录后在本班空间协作，教师上传和管理教学材料并入库，同班师生在线查看或下载原文件，学生保持只读。
+- **本学期不做：** 检索问答、AI 对话助手、作业提交与批改、注册与找回密码、SSO、多校多租户及生产级高可用。
 
 ## 技术栈
 
@@ -130,7 +130,7 @@ Set-Location ..\backend
 
 Set-Location ..
 docker compose --env-file .env.example config
-openspec validate add-auth-rbac-class-knowledge --strict
+openspec validate --specs --strict
 ```
 
 后端集成测试使用 Testcontainers 启动真实 MySQL 8，因此运行测试时 Docker 必须可用。

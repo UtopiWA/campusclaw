@@ -8,6 +8,7 @@ export class ApiError extends Error {
 }
 
 export async function refreshCsrfToken() {
+  // Fetch a fresh token after startup or logout; the server also sets the matching CSRF cookie.
   const response = await fetch('/api/auth/csrf', { credentials: 'same-origin' })
   if (!response.ok) {
     throw new ApiError(response.status, '无法初始化安全会话')
@@ -18,6 +19,7 @@ export async function refreshCsrfToken() {
 }
 
 export async function apiRequest(path, options = {}) {
+  // Centralize same-origin credentials, CSRF headers and response decoding for every API caller.
   const { responseType = 'json', ...requestOptions } = options
   const method = (requestOptions.method || 'GET').toUpperCase()
   const headers = new Headers(requestOptions.headers || {})
@@ -39,6 +41,7 @@ export async function apiRequest(path, options = {}) {
   })
 
   if (response.status === 401 && typeof window !== 'undefined') {
+    // Keep authentication state and route handling decoupled from this transport helper.
     window.dispatchEvent(new CustomEvent('campusclaw:unauthorized'))
   }
   if (!response.ok) {
