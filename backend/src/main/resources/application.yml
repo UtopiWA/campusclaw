@@ -1,11 +1,5 @@
 server:
   port: ${SERVER_PORT:8080}
-  servlet:
-    session:
-      cookie:
-        http-only: true
-        same-site: lax
-        secure: ${COOKIE_SECURE:false}
 
 spring:
   datasource:
@@ -38,6 +32,7 @@ logging:
   level:
     org.springframework.web.client: INFO
     org.springframework.http.converter: INFO
+    org.springframework.security.oauth2.server.resource: INFO
 
 app:
   upload-dir: ${UPLOAD_DIR:./uploads}
@@ -45,6 +40,10 @@ app:
   demo-seed:
     enabled: ${DEMO_SEED_ENABLED:false}
     password: ${DEMO_SEED_PASSWORD:}
+  auth:
+    jwt:
+      secret: ${AUTH_JWT_SECRET}
+      ttl: ${AUTH_JWT_TTL:PT8H}
   qdrant:
     url: ${QDRANT_URL}
     collection: ${QDRANT_COLLECTION:campusclaw_chunks}

@@ -1,33 +1,49 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { apiRequest, clearCsrfToken } from './api.js'
+import { apiRequest, clearAccessToken, getAccessToken, setAccessToken } from './api.js'
 
 describe('apiRequest', () => {
   beforeEach(() => {
-    clearCsrfToken()
+    clearAccessToken()
     vi.restoreAllMocks()
   })
 
-  it('fetches a CSRF token before a write request', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'csrf-token' }), {
+  it('attaches the bearer token to JSON and multipart requests', async () => {
+    setAccessToken('access-token')
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
-      }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }))
+      }),
+    ))
     vi.stubGlobal('fetch', fetchMock)
 
     await apiRequest('/api/example', { method: 'POST', body: JSON.stringify({ value: 1 }) })
+    await apiRequest('/api/materials/upload', { method: 'POST', body: new FormData() })
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
-    const requestOptions = fetchMock.mock.calls[1][1]
-    expect(requestOptions.headers.get('X-XSRF-TOKEN')).toBe('csrf-token')
-    expect(requestOptions.credentials).toBe('same-origin')
+    expect(fetchMock.mock.calls[0][1].headers.get('Authorization')).toBe('Bearer access-token')
+    expect(fetchMock.mock.calls[0][1].headers.get('Content-Type')).toBe('application/json')
+    expect(fetchMock.mock.calls[1][1].headers.get('Authorization')).toBe('Bearer access-token')
+    expect(fetchMock.mock.calls[1][1].headers.has('Content-Type')).toBe(false)
+    expect(fetchMock.mock.calls[0][1]).not.toHaveProperty('credentials')
   })
 
-  it('emits an unauthorized event for a 401 response', async () => {
+  it('does not send an old token on an anonymous request', async () => {
+    setAccessToken('old-token')
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ accessToken: 'new-token' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await apiRequest('/api/auth/login', { method: 'POST', body: '{}', anonymous: true })
+
+    expect(fetchMock.mock.calls[0][1].headers.has('Authorization')).toBe(false)
+    expect(fetchMock.mock.calls[0][1]).not.toHaveProperty('anonymous')
+  })
+
+  it('clears the token and emits an unauthorized event for a 401 response', async () => {
+    setAccessToken('expired-token')
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'no' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
@@ -36,6 +52,7 @@ describe('apiRequest', () => {
     window.addEventListener('campusclaw:unauthorized', listener, { once: true })
 
     await expect(apiRequest('/api/materials')).rejects.toMatchObject({ status: 401 })
+    expect(getAccessToken()).toBeNull()
     expect(listener).toHaveBeenCalledOnce()
   })
 

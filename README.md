@@ -61,7 +61,7 @@ Compose 仅将 MySQL 暴露到宿主机回环地址，不会监听局域网网�
 | `student-a1` | 学生 | 班级 A |
 | `student-b1` | 学生 | 班级 B |
 
-教师可以上传、查看、下载、重命名、删除和按三种策略重建本班材料索引；学生可以查看、下载和检索，但不能执行管理操作。任何客户端提交的 `class_id` 都会被忽略，数据范围只取登录会话班级；跨班按 ID 管理统一返回 404，跨班检索返回空结果。
+教师可以上传、查看、下载、重命名、删除和按三种策略重建本班材料索引；学生可以查看、下载和检索，但不能执行管理操作。任何客户端提交的 `class_id` 都会被忽略，数据范围只取 Bearer JWT 对应用户在数据库中的最新班级；跨班按 ID 管理统一返回 404，跨班检索返回空结果。
 
 系统种子材料只包含知识条目，没有对应的物理原文件，页面会将查看和下载按钮标记为不可用。教师新上传的 `.txt`/`.md` 文件可正常查看和下载。
 
@@ -75,6 +75,8 @@ $env:DB_USERNAME = "campusclaw"
 $env:DB_PASSWORD = "本地数据库密码"
 $env:DEMO_SEED_ENABLED = "true"
 $env:DEMO_SEED_PASSWORD = "本地演示口令"
+$env:AUTH_JWT_SECRET = "至少32字节的本地随机JWT签名密钥"
+$env:AUTH_JWT_TTL = "PT8H"
 $env:SERVER_PORT = "8081"
 $env:QDRANT_URL = "http://localhost:6333"
 $env:QDRANT_COLLECTION = "campusclaw_chunks"
@@ -103,10 +105,9 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 
 | 方法与路径 | 用途 |
 | --- | --- |
-| `GET /api/auth/csrf` | 获取写请求 CSRF 令牌 |
-| `POST /api/auth/login` | 登录并建立服务端会话 |
+| `POST /api/auth/login` | 登录并签发 Bearer JWT |
 | `GET /api/auth/me` | 获取当前用户、角色和班级 |
-| `POST /api/auth/logout` | 退出并失效会话 |
+| `POST /api/auth/logout` | 幂等退出端点；客户端删除访问令牌 |
 | `GET /api/materials` | 查询当前班级材料 |
 | `POST /api/materials/upload` | 教师上传 `.txt`/`.md` 材料 |
 | `GET /api/materials/{id}/content` | 同班师生以 UTF-8 纯文本在线查看原文件 |
@@ -155,6 +156,6 @@ openspec validate --specs --strict
 
 - `.env`、数据库凭据和演示口令不得提交。
 - 密码只以 BCrypt 哈希形式写入数据库。
-- 基于 Cookie 的写请求必须携带 CSRF 令牌；不要全局关闭 Spring Security CSRF。
-- 生产环境必须设置 `DEMO_SEED_ENABLED=false`、使用 HTTPS，并设置 `COOKIE_SECURE=true`。
+- 受保护 API 必须携带 `Authorization: Bearer <token>`；令牌只保存于当前标签页的 `sessionStorage`，不得写入 URL 或日志。
+- 生产环境必须设置 `DEMO_SEED_ENABLED=false`、使用 HTTPS，并通过 `AUTH_JWT_SECRET` 提供至少 32 字节的独立随机密钥。
 - 演示账号仅用于本地或课堂验收，不应进入生产数据。

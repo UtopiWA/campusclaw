@@ -4,8 +4,8 @@ context: |
   CampusClaw 是面向中小学班级场景的教研智能体平台，当前已具备账号登录、教师/学生角色权限、服务端班级隔离，以及教师上传教学材料并写入知识库的基础实现。
   当前行为基线由 openspec/specs 下的主规格维护；已完成 change 保存在 openspec/changes/archive 中，仅用于追溯。
   平台支持材料上传、同班在线查看与原文件下载；教师可以管理材料，学生保持只读。
-  参考技术栈为 Vue 3、Vite、Java 17、Spring Boot 3、MySQL 8、服务端会话和 Docker Compose；首版只解析 .txt 与 .md。
-  班级是数据边界，所有业务读写都必须使用会话中的 class_id；客户端不得指定或覆盖数据所属班级。
+  参考技术栈为 Vue 3、Vite、Java 17、Spring Boot 3、MySQL 8、Bearer JWT 和 Docker Compose；首版只解析 .txt 与 .md。
+  班级是数据边界，所有业务读写都必须使用 Bearer JWT 标识用户在数据库中的最新 class_id；客户端不得指定或覆盖数据所属班级。
   密码必须哈希存储，数据库凭据、演示种子口令等敏感配置必须来自服务端环境变量。
   规约变更必须先于实现；实现完成后按 tasks.md 逐项验证，且不得提交真实密钥或生成数据。
 

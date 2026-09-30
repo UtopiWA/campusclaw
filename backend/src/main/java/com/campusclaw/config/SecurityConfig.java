@@ -14,10 +14,6 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
-import org.springframework.security.web.context.SecurityContextRepository;
-import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
-import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
 @Configuration
 public class SecurityConfig {
@@ -43,38 +39,24 @@ public class SecurityConfig {
     }
 
     @Bean
-    SecurityContextRepository securityContextRepository() {
-        return new HttpSessionSecurityContextRepository();
-    }
-
-    @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, SecurityContextRepository contextRepository)
-            throws Exception {
-        // The SPA reads the CSRF cookie and echoes it in a request header; the session cookie remains HttpOnly.
-        CookieCsrfTokenRepository csrfRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
-        csrfRepository.setCookiePath("/");
-        CsrfTokenRequestAttributeHandler csrfHandler = new CsrfTokenRequestAttributeHandler();
-        csrfHandler.setCsrfRequestAttributeName(null);
-
-        // Login explicitly saves a minimal principal, while every other API requires the server-side session.
+    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        // Bearer Token 由浏览器显式附加，不依赖自动携带的 Cookie，因此使用无状态策略并关闭 CSRF。
         http
-                .securityContext(context -> context
-                        .securityContextRepository(contextRepository)
-                        .requireExplicitSave(true))
-                .csrf(csrf -> csrf
-                        .csrfTokenRepository(csrfRepository)
-                        .csrfTokenRequestHandler(csrfHandler))
+                .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session
-                        .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
-                        .sessionFixation(fixation -> fixation.changeSessionId()))
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/health", "/api/auth/csrf", "/api/auth/login").permitAll()
+                        .requestMatchers("/health", "/api/auth/login").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint((request, response, exception) ->
                                 writeError(response, 401, "Authentication required"))
                         .accessDeniedHandler((request, response, exception) ->
                                 writeError(response, 403, "Forbidden")))
+                .oauth2ResourceServer(resourceServer -> resourceServer
+                        .jwt(jwt -> { })
+                        .authenticationEntryPoint((request, response, exception) ->
+                                writeError(response, 401, "Authentication required")))
                 .formLogin(form -> form.disable())
                 .httpBasic(basic -> basic.disable())
                 .logout(logout -> logout.disable());

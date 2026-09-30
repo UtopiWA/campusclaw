@@ -8,9 +8,10 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 
-/** Resolves the minimal session principal into the current database-backed user and class context. */
+/** 将 JWT 中的最小用户标识解析为数据库当前用户、角色和班级上下文。 */
 @Service
 public class CurrentUserService {
     private final UserAccountRepository users;
@@ -22,13 +23,21 @@ public class CurrentUserService {
     }
 
     public UserAccount requireUser() {
-        // Reloading on every request makes account disablement and role/class changes effective immediately.
+        // JWT 不固化业务权限；每次请求回查数据库，使禁用、角色和班级变更立即生效。
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !authentication.isAuthenticated()
-                || !(authentication.getPrincipal() instanceof SessionPrincipal principal)) {
+                || !(authentication.getPrincipal() instanceof Jwt jwt)) {
             throw new AuthenticationCredentialsNotFoundException("Authentication required");
         }
-        return users.findById(principal.userId())
+        try {
+            return requireUser(Long.valueOf(jwt.getSubject()));
+        } catch (NumberFormatException exception) {
+            throw new AuthenticationCredentialsNotFoundException("Authentication required");
+        }
+    }
+
+    public UserAccount requireUser(Long userId) {
+        return users.findById(userId)
                 .filter(UserAccount::isEnabled)
                 .orElseThrow(() -> new AuthenticationCredentialsNotFoundException("Authentication required"));
     }

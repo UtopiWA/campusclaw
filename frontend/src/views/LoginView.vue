@@ -59,7 +59,7 @@ async function submit() {
           <p v-if="error" class="feedback feedback--error" role="alert">{{ error }}</p>
           <button class="button button--primary login-submit" type="submit" :disabled="busy">{{ busy ? '正在验证…' : '登录' }}</button>
         </form>
-        <div class="login-security"><AppIcon name="lock" /><span>会话与班级权限由服务端安全校验</span></div>
+        <div class="login-security"><AppIcon name="lock" /><span>Bearer 令牌与班级权限由服务端安全校验</span></div>
       </div>
     </section>
   </main>

@@ -1,4 +1,4 @@
-let csrfToken = null
+const ACCESS_TOKEN_KEY = 'campusclaw.access-token'
 
 export class ApiError extends Error {
   constructor(status, message) {
@@ -7,27 +7,30 @@ export class ApiError extends Error {
   }
 }
 
-export async function refreshCsrfToken() {
-  // Fetch a fresh token after startup or logout; the server also sets the matching CSRF cookie.
-  const response = await fetch('/api/auth/csrf', { credentials: 'same-origin' })
-  if (!response.ok) {
-    throw new ApiError(response.status, '无法初始化安全会话')
+export function getAccessToken() {
+  return typeof window === 'undefined' ? null : window.sessionStorage.getItem(ACCESS_TOKEN_KEY)
+}
+
+export function setAccessToken(token) {
+  if (typeof window !== 'undefined') {
+    window.sessionStorage.setItem(ACCESS_TOKEN_KEY, token)
   }
-  const body = await response.json()
-  csrfToken = body.token
-  return csrfToken
+}
+
+export function clearAccessToken() {
+  if (typeof window !== 'undefined') {
+    window.sessionStorage.removeItem(ACCESS_TOKEN_KEY)
+  }
 }
 
 export async function apiRequest(path, options = {}) {
-  // Centralize same-origin credentials, CSRF headers and response decoding for every API caller.
-  const { responseType = 'json', ...requestOptions } = options
+  // 统一附加 Bearer 令牌并处理各类响应，登录等公开请求可通过 anonymous 跳过令牌。
+  const { responseType = 'json', anonymous = false, ...requestOptions } = options
   const method = (requestOptions.method || 'GET').toUpperCase()
   const headers = new Headers(requestOptions.headers || {})
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
-    if (!csrfToken) {
-      await refreshCsrfToken()
-    }
-    headers.set('X-XSRF-TOKEN', csrfToken)
+  const token = anonymous ? null : getAccessToken()
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
   }
   if (requestOptions.body && !(requestOptions.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -37,12 +40,14 @@ export async function apiRequest(path, options = {}) {
     ...requestOptions,
     method,
     headers,
-    credentials: 'same-origin',
   })
 
-  if (response.status === 401 && typeof window !== 'undefined') {
-    // Keep authentication state and route handling decoupled from this transport helper.
-    window.dispatchEvent(new CustomEvent('campusclaw:unauthorized'))
+  if (response.status === 401) {
+    clearAccessToken()
+    if (typeof window !== 'undefined') {
+      // 让共享身份状态和路由逻辑独立于底层传输实现。
+      window.dispatchEvent(new CustomEvent('campusclaw:unauthorized'))
+    }
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
@@ -58,8 +63,4 @@ export async function apiRequest(path, options = {}) {
     return response.blob()
   }
   return response.json()
-}
-
-export function clearCsrfToken() {
-  csrfToken = null
 }

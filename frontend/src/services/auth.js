@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import { apiRequest, clearCsrfToken } from './api.js'
+import { apiRequest, clearAccessToken, getAccessToken, setAccessToken } from './api.js'
 
 export const authState = reactive({
   user: null,
@@ -7,9 +7,14 @@ export const authState = reactive({
 })
 
 export async function loadCurrentUser(force = false) {
-  // Reuse the resolved session during navigation unless a caller explicitly requests revalidation.
+  // 当前标签页没有访问令牌时直接视为未登录，避免无意义的 /me 请求。
   if (authState.loaded && !force) {
     return authState.user
+  }
+  if (!getAccessToken()) {
+    authState.user = null
+    authState.loaded = true
+    return null
   }
   try {
     authState.user = await apiRequest('/api/auth/me')
@@ -25,17 +30,22 @@ export async function loadCurrentUser(force = false) {
 }
 
 export async function login(username, password) {
-  authState.user = await apiRequest('/api/auth/login', {
+  const response = await apiRequest('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
+    anonymous: true,
   })
+  setAccessToken(response.accessToken)
+  authState.user = response.user
   authState.loaded = true
   return authState.user
 }
 
 export async function logout() {
   try {
-    await apiRequest('/api/auth/logout', { method: 'POST' })
+    if (getAccessToken()) {
+      await apiRequest('/api/auth/logout', { method: 'POST' })
+    }
   } finally {
     clearAuthentication()
   }
@@ -44,10 +54,10 @@ export async function logout() {
 export function clearAuthentication() {
   authState.user = null
   authState.loaded = true
-  clearCsrfToken()
+  clearAccessToken()
 }
 
 if (typeof window !== 'undefined') {
-  // Any API-level 401 invalidates the shared client state, not just the request that observed it.
+  // 任意 API 返回 401 时，清除全局身份状态并交由路由守卫回到登录页。
   window.addEventListener('campusclaw:unauthorized', clearAuthentication)
 }

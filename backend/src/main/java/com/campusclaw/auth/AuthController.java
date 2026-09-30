@@ -1,22 +1,13 @@
 package com.campusclaw.auth;
 
 import com.campusclaw.persistence.UserAccount;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
-import java.util.List;
-import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
-import org.springframework.security.core.context.SecurityContext;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.context.SecurityContextRepository;
-import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -29,51 +20,27 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/auth")
 public class AuthController {
     private final AuthenticationManager authenticationManager;
-    private final SecurityContextRepository contextRepository;
     private final CurrentUserService currentUsers;
+    private final JwtTokenService tokens;
 
     public AuthController(AuthenticationManager authenticationManager,
-                          SecurityContextRepository contextRepository,
-                          CurrentUserService currentUsers) {
+                          CurrentUserService currentUsers,
+                          JwtTokenService tokens) {
         this.authenticationManager = authenticationManager;
-        this.contextRepository = contextRepository;
         this.currentUsers = currentUsers;
-    }
-
-    @GetMapping("/csrf")
-    public Map<String, String> csrf(CsrfToken token) {
-        return Map.of("headerName", token.getHeaderName(), "token", token.getToken());
+        this.tokens = tokens;
     }
 
     @PostMapping("/login")
-    public CurrentUserService.CurrentUserView login(@Valid @RequestBody LoginRequest body,
-                                                     HttpServletRequest request,
-                                                     HttpServletResponse response) {
+    public LoginResponse login(@Valid @RequestBody LoginRequest body) {
         try {
             Authentication verified = authenticationManager.authenticate(
                     UsernamePasswordAuthenticationToken.unauthenticated(body.username(), body.password()));
             UserPrincipal verifiedUser = (UserPrincipal) verified.getPrincipal();
-
-            // Rotate an existing ID after authentication to prevent session fixation.
-            HttpSession existing = request.getSession(false);
-            if (existing != null) {
-                request.changeSessionId();
-            } else {
-                request.getSession(true);
-            }
-
-            // Persist only the stable user ID; role, enabled state and class membership are reloaded per request.
-            Authentication sessionAuthentication = UsernamePasswordAuthenticationToken.authenticated(
-                    new SessionPrincipal(verifiedUser.userId()), null, List.of());
-            SecurityContext context = SecurityContextHolder.createEmptyContext();
-            context.setAuthentication(sessionAuthentication);
-            SecurityContextHolder.setContext(context);
-            contextRepository.saveContext(context, request, response);
-
-            UserAccount user = currentUsers.requireUser();
-            return currentUsers.view(user);
+            UserAccount user = currentUsers.requireUser(verifiedUser.userId());
+            JwtTokenService.IssuedToken token = tokens.issue(user.getId());
+            return new LoginResponse("Bearer", token.value(), token.expiresAt(), currentUsers.view(user));
         } catch (AuthenticationException exception) {
-            SecurityContextHolder.clearContext();
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password");
         }
     }
@@ -85,14 +52,14 @@ public class AuthController {
 
     @PostMapping("/logout")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void logout(HttpServletRequest request) {
-        HttpSession session = request.getSession(false);
-        if (session != null) {
-            session.invalidate();
-        }
-        SecurityContextHolder.clearContext();
+    public void logout() {
+        // JWT 无服务端会话；保留幂等端点，实际退出由客户端删除令牌完成。
     }
 
     public record LoginRequest(@NotBlank String username, @NotBlank String password) {
+    }
+
+    public record LoginResponse(String tokenType, String accessToken, java.time.Instant expiresAt,
+                                CurrentUserService.CurrentUserView user) {
     }
 }
