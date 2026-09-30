@@ -52,6 +52,11 @@ public class ApiExceptionHandler {
         return error(HttpStatus.INTERNAL_SERVER_ERROR, "Database operation failed");
     }
 
+    @ExceptionHandler(DependencyUnavailableException.class)
+    ResponseEntity<Map<String, String>> dependencyFailure(DependencyUnavailableException exception) {
+        return error(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage());
+    }
+
     private ResponseEntity<Map<String, String>> error(HttpStatus status, String message) {
         return ResponseEntity.status(status).body(Map.of("error", message));
     }

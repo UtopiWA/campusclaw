@@ -18,5 +18,10 @@ describe('authGuard', () => {
     const result = await authGuard({ path: '/login', fullPath: '/login', meta: {} })
     expect(result).toBe('/materials')
   })
-})
 
+  it.each(['teacher', 'student'])('allows an authenticated %s to enter search', async (role) => {
+    authState.user = { id: 1, role }
+    const result = await authGuard({ path: '/search', fullPath: '/search', meta: { requiresAuth: true } })
+    expect(result).toBe(true)
+  })
+})

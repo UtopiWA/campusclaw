@@ -5,6 +5,8 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -31,6 +33,20 @@ public class Material {
 
     @Column(name = "file_size_bytes")
     private Long fileSizeBytes;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "index_status", nullable = false)
+    private IndexStatus indexStatus = IndexStatus.PENDING;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "index_strategy", nullable = false)
+    private IndexStrategy indexStrategy = IndexStrategy.AUTO;
+
+    @Column(name = "index_error", length = 500)
+    private String indexError;
+
+    @Column(name = "indexed_at")
+    private Instant indexedAt;
 
     @Column(name = "uploaded_by", nullable = false)
     private Long uploadedBy;
@@ -102,6 +118,42 @@ public class Material {
 
     public Long getUploadedBy() {
         return uploadedBy;
+    }
+
+    public IndexStatus getIndexStatus() {
+        return indexStatus;
+    }
+
+    public IndexStrategy getIndexStrategy() {
+        return indexStrategy;
+    }
+
+    public String getIndexError() {
+        return indexError;
+    }
+
+    public Instant getIndexedAt() {
+        return indexedAt;
+    }
+
+    /** 索引状态只通过领域方法切换，避免业务层遗漏错误信息和完成时间的联动更新。 */
+    public void markIndexing(IndexStrategy strategy) {
+        this.indexStatus = IndexStatus.INDEXING;
+        this.indexStrategy = strategy;
+        this.indexError = null;
+        this.indexedAt = null;
+    }
+
+    public void markReady() {
+        this.indexStatus = IndexStatus.READY;
+        this.indexError = null;
+        this.indexedAt = Instant.now();
+    }
+
+    public void markFailed(String message) {
+        this.indexStatus = IndexStatus.FAILED;
+        this.indexError = message == null ? "Indexing failed" : message.substring(0, Math.min(500, message.length()));
+        this.indexedAt = null;
     }
 
     public Instant getCreatedAt() {

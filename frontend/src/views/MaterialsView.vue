@@ -23,6 +23,12 @@ const downloadBusyId = ref(null)
 const renameOpen = ref(false)
 const renameTitle = ref('')
 const deleteOpen = ref(false)
+const rebuildOpen = ref(false)
+const rebuildStrategy = ref('AUTO')
+const rebuildMax = ref(800)
+const rebuildOverlap = ref(10)
+const rebuildBreak = ref('PARAGRAPH')
+const rebuildPreprocess = ref(false)
 
 const isTeacher = computed(() => authState.user?.role === 'teacher')
 const fileCount = computed(() => materials.value.filter((material) => material.hasFile).length)
@@ -154,6 +160,43 @@ function openDelete(material) {
   deleteOpen.value = true
 }
 
+function openRebuild(material) {
+  activeMaterial.value = material
+  rebuildStrategy.value = material.indexStrategy || 'AUTO'
+  rebuildOpen.value = true
+}
+
+async function rebuildIndex() {
+  if (!activeMaterial.value) return
+  busy.value = true
+  error.value = ''
+  try {
+    const body = { strategy: rebuildStrategy.value }
+    if (rebuildStrategy.value === 'CUSTOM') {
+      Object.assign(body, {
+        maxCodePoints: Number(rebuildMax.value),
+        overlapPercent: Number(rebuildOverlap.value),
+        breakPreference: rebuildBreak.value,
+        preprocess: rebuildPreprocess.value,
+      })
+    }
+    await apiRequest(`/api/materials/${activeMaterial.value.id}/index/rebuild`, {
+      method: 'POST', body: JSON.stringify(body),
+    })
+    rebuildOpen.value = false
+    notice.value = '材料索引已重建。'
+    await loadMaterials()
+  } catch (exception) {
+    error.value = exception.message
+  } finally {
+    busy.value = false
+  }
+}
+
+function indexLabel(status) {
+  return ({ PENDING: '待索引', INDEXING: '索引中', READY: '可检索', FAILED: '索引失败' })[status] || '待索引'
+}
+
 async function remove() {
   if (!activeMaterial.value) return
   busy.value = true
@@ -242,6 +285,7 @@ onMounted(loadMaterials)
             <div class="material-main">
               <div class="material-title-line">
                 <h3>{{ material.title }}</h3><span class="tag" :class="{ 'tag--muted': !material.hasFile }">{{ fileKind(material) }}</span>
+                <span class="index-badge" :class="`index-badge--${(material.indexStatus || 'PENDING').toLowerCase()}`">{{ indexLabel(material.indexStatus) }}</span>
               </div>
               <p>{{ material.originalFilename || '系统示例知识条目（无原始文件）' }}</p>
               <div class="material-meta">
@@ -253,6 +297,7 @@ onMounted(loadMaterials)
               <button class="button button--soft" type="button" :disabled="!material.hasFile" :aria-label="`查看 ${material.title}`" :title="material.hasFile ? '在线查看' : '系统示例条目没有原始文件'" @click="viewMaterial(material)"><AppIcon name="eye" /><span>查看</span></button>
               <button class="button button--soft" type="button" :disabled="!material.hasFile || downloadBusyId === material.id" :aria-label="`下载 ${material.title}`" :title="material.hasFile ? '下载原文件' : '系统示例条目没有原始文件'" @click="downloadMaterial(material)"><AppIcon name="download" /><span>{{ downloadBusyId === material.id ? '下载中' : '下载' }}</span></button>
               <template v-if="isTeacher">
+                <button class="icon-button" type="button" :aria-label="`重建索引 ${material.title}`" title="重建索引" @click="openRebuild(material)"><AppIcon name="refresh" /></button>
                 <button class="icon-button" type="button" :aria-label="`重命名 ${material.title}`" title="重命名" @click="openRename(material)"><AppIcon name="edit" /></button>
                 <button class="icon-button icon-button--danger" type="button" :aria-label="`删除 ${material.title}`" title="删除" @click="openDelete(material)"><AppIcon name="trash" /></button>
               </template>
@@ -302,6 +347,30 @@ onMounted(loadMaterials)
     <template #footer>
       <button class="button button--secondary" type="button" :disabled="busy" @click="deleteOpen = false">取消</button>
       <button class="button button--danger" type="button" :disabled="busy" @click="remove">{{ busy ? '删除中…' : '确认删除' }}</button>
+    </template>
+  </BaseModal>
+
+  <BaseModal v-if="rebuildOpen" title="重建材料索引" :description="activeMaterial?.title || ''" @close="rebuildOpen = false">
+    <form class="modal-form index-form" @submit.prevent="rebuildIndex">
+      <label>切分策略
+        <select v-model="rebuildStrategy">
+          <option value="AUTO">自动窗口（800 / 重叠 80）</option>
+          <option value="HIERARCHY">Markdown 标题层级</option>
+          <option value="CUSTOM">自定义</option>
+        </select>
+      </label>
+      <template v-if="rebuildStrategy === 'CUSTOM'">
+        <label>最大字符数（100～2000）<input v-model.number="rebuildMax" type="number" min="100" max="2000" required /></label>
+        <label>重叠比例（0～50%）<input v-model.number="rebuildOverlap" type="number" min="0" max="50" required /></label>
+        <label>优先断点
+          <select v-model="rebuildBreak"><option value="PARAGRAPH">空行</option><option value="LINE">换行</option><option value="SENTENCE">句末</option></select>
+        </label>
+        <label class="checkbox-label"><input v-model="rebuildPreprocess" type="checkbox" />切分前移除 URL、邮箱并合并连续空白</label>
+      </template>
+    </form>
+    <template #footer>
+      <button class="button button--secondary" type="button" :disabled="busy" @click="rebuildOpen = false">取消</button>
+      <button class="button button--primary" type="button" :disabled="busy" @click="rebuildIndex">{{ busy ? '重建中…' : '确认重建' }}</button>
     </template>
   </BaseModal>
 </template>

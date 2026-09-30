@@ -33,9 +33,36 @@ spring:
       max-file-size: ${MAX_UPLOAD_BYTES:2097152}
       max-request-size: ${MAX_UPLOAD_BYTES:2097152}
 
+# 即使全局开启 debug，也不记录外部模型请求正文或响应正文。
+logging:
+  level:
+    org.springframework.web.client: INFO
+    org.springframework.http.converter: INFO
+
 app:
   upload-dir: ${UPLOAD_DIR:./uploads}
   max-upload-bytes: ${MAX_UPLOAD_BYTES:2097152}
   demo-seed:
     enabled: ${DEMO_SEED_ENABLED:false}
     password: ${DEMO_SEED_PASSWORD:}
+  qdrant:
+    url: ${QDRANT_URL}
+    collection: ${QDRANT_COLLECTION:campusclaw_chunks}
+  embedding:
+    base-url: ${EMBEDDING_BASE_URL}
+    api-key: ${EMBEDDING_API_KEY}
+    model: ${EMBEDDING_MODEL}
+    dimension: ${EMBEDDING_DIMENSION}
+  chat:
+    base-url: ${CHAT_BASE_URL}
+    api-key: ${CHAT_API_KEY}
+    model: ${CHAT_MODEL}
+  retrieval:
+    connect-timeout: ${RETRIEVAL_CONNECT_TIMEOUT:3s}
+    read-timeout: ${RETRIEVAL_READ_TIMEOUT:30s}
+    query-max-code-points: ${RETRIEVAL_QUERY_MAX_CODE_POINTS:1000}
+    default-limit: ${RETRIEVAL_DEFAULT_LIMIT:10}
+    max-limit: ${RETRIEVAL_MAX_LIMIT:20}
+    vector-threshold: ${RETRIEVAL_VECTOR_THRESHOLD:0.35}
+    rrf-k: ${RETRIEVAL_RRF_K:60}
+    initialize-vector-store: ${RETRIEVAL_INITIALIZE_VECTOR_STORE:true}

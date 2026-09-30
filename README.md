@@ -1,14 +1,14 @@
 # CampusClaw
 
 - **价值主张：** 把分散的校本教学材料沉淀为按班级隔离、可持续复用的教研知识资产。
-- **核心场景：** 教师和学生登录后在本班空间协作，教师上传和管理教学材料并入库，同班师生在线查看或下载原文件，学生保持只读。
-- **本学期不做：** 检索问答、AI 对话助手、作业提交与批改、注册与找回密码、SSO、多校多租户及生产级高可用。
+- **核心场景：** 教师上传和管理教学材料，系统生成可追溯切片并写入向量索引；同班师生可查看、下载、按关键词/语义/混合模式检索，并基于检索依据问答。
+- **本次不做：** 通用自由对话、作业提交与批改、注册与找回密码、SSO、多校多租户及生产级高可用。
 
 ## 技术栈
 
 - 前端：Vue 3、Vite、Vue Router、Vitest
 - 后端：Java 17、Spring Boot 3、Spring Security、Spring Data JPA、Flyway
-- 数据库：MySQL 8（InnoDB、`utf8mb4`）
+- 数据：MySQL 8（正文、状态与 ngram 全文索引）、Qdrant（向量与编号 payload）
 - 运行：Docker Compose、Nginx
 
 ## 从零启动
@@ -28,14 +28,16 @@
    docker compose up --build
    ```
 
-4. 等待三个服务健康后访问 <http://localhost:8080>。健康检查地址为 <http://localhost:8080/health>。
+4. 等待 MySQL、Qdrant、后端和前端健康后访问 <http://localhost:8080>。健康检查地址为 <http://localhost:8080/health>。
 5. 停止服务但保留数据：
 
    ```powershell
    docker compose down
    ```
 
-MySQL 数据和上传文件分别保存在 `mysql-data`、`uploads-data` 命名 volume 中。不要使用 `docker compose down -v`，除非明确要删除全部演示数据。
+MySQL 数据、上传文件和 Qdrant 向量分别保存在 `mysql-data`、`uploads-data`、`qdrant-data` 命名 volume 中。不要使用 `docker compose down -v`，除非明确要删除全部演示数据。
+
+Embedding 与 Chat 使用 OpenAI-compatible HTTP API。`.env` 中必须设置各自的 base URL、API key、模型名以及实际 embedding 维度；Qdrant collection 已存在但维度或距离不是 Cosine 时，后端会明确拒绝启动，不会自动删除或重建已有数据。
 
 ## 使用 DBeaver 查看数据库
 
@@ -59,7 +61,7 @@ Compose 仅将 MySQL 暴露到宿主机回环地址，不会监听局域网网�
 | `student-a1` | 学生 | 班级 A |
 | `student-b1` | 学生 | 班级 B |
 
-教师可以上传、查看、下载、重命名和删除本班材料；学生可以查看和下载本班材料，但不能执行任何写操作。任何客户端提交的 `class_id` 都不能改变数据归属，跨班按 ID 访问（包括文件查看和下载）统一返回 404。
+教师可以上传、查看、下载、重命名、删除和按三种策略重建本班材料索引；学生可以查看、下载和检索，但不能执行管理操作。任何客户端提交的 `class_id` 都会被忽略，数据范围只取登录会话班级；跨班按 ID 管理统一返回 404，跨班检索返回空结果。
 
 系统种子材料只包含知识条目，没有对应的物理原文件，页面会将查看和下载按钮标记为不可用。教师新上传的 `.txt`/`.md` 文件可正常查看和下载。
 
@@ -74,6 +76,15 @@ $env:DB_PASSWORD = "本地数据库密码"
 $env:DEMO_SEED_ENABLED = "true"
 $env:DEMO_SEED_PASSWORD = "本地演示口令"
 $env:SERVER_PORT = "8081"
+$env:QDRANT_URL = "http://localhost:6333"
+$env:QDRANT_COLLECTION = "campusclaw_chunks"
+$env:EMBEDDING_BASE_URL = "https://你的兼容服务/v1"
+$env:EMBEDDING_API_KEY = "本地密钥"
+$env:EMBEDDING_MODEL = "嵌入模型名"
+$env:EMBEDDING_DIMENSION = "1024"
+$env:CHAT_BASE_URL = "https://你的兼容服务/v1"
+$env:CHAT_API_KEY = "本地密钥"
+$env:CHAT_MODEL = "对话模型名"
 Set-Location backend
 .\mvnw.cmd spring-boot:run
 ```
@@ -102,9 +113,14 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 | `GET /api/materials/{id}/download` | 同班师生下载原文件 |
 | `PATCH /api/materials/{id}` | 教师修改本班材料标题 |
 | `DELETE /api/materials/{id}` | 教师删除本班材料及知识条目 |
+| `POST /api/materials/{id}/index/rebuild` | 教师以 AUTO/CUSTOM/HIERARCHY 重建索引 |
+| `POST /api/retrieval/search` | keyword/vector/hybrid 可追溯检索，默认 hybrid |
+| `POST /api/ask` | 固定 hybrid 前 4 条依据的问答与引用 |
 | `GET /health` | 无需登录的应用与数据库健康检查 |
 
 匿名 API 请求返回 401，角色不足返回 403，跨班资源返回不泄露存在性的 404。
+
+检索的 `query` 为 1～1000 个 Unicode 字符，`limit` 为 1～20。keyword 仅依赖 MySQL；vector 和 hybrid 在嵌入或 Qdrant 不可用时返回脱敏 503。无命中始终返回 200、空 `hits` 与“资料中未找到相关内容”；问答在此分支不会调用 Chat。Qdrant payload 不保存正文，point ID、payload `chunk_id` 与 MySQL chunk ID 保持一致。
 
 ## 前端界面约定
 

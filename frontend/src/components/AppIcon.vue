@@ -65,6 +65,9 @@ defineProps({
     <template v-else-if="name === 'layers'">
       <path d="m12 2 9 5-9 5-9-5z" /><path d="m3 12 9 5 9-5M3 17l9 5 9-5" />
     </template>
+    <template v-else-if="name === 'refresh'">
+      <path d="M20 7v5h-5" /><path d="M4 17v-5h5" /><path d="M6.1 8a7 7 0 0 1 11.6-2.6L20 8M4 16l2.3 2.6A7 7 0 0 0 17.9 16" />
+    </template>
     <template v-else-if="name === 'shield'">
       <path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10" /><path d="m9 12 2 2 4-5" />
     </template>

@@ -8,5 +8,5 @@ public interface MaterialRepository extends JpaRepository<Material, Long> {
     List<Material> findAllByClassIdOrderByCreatedAtDesc(Long classId);
     Optional<Material> findByIdAndClassId(Long id, Long classId);
     Optional<Material> findFirstByClassIdAndTitleAndStoredPathIsNull(Long classId, String title);
+    List<Material> findAllByIndexStatusNotOrderById(IndexStatus status);
 }
-

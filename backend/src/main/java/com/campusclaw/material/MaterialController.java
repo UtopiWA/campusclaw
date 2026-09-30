@@ -1,6 +1,9 @@
 package com.campusclaw.material;
 
 import com.campusclaw.auth.CurrentUserService;
+import com.campusclaw.knowledge.ChunkingOptions;
+import com.campusclaw.knowledge.IndexingService;
+import com.campusclaw.knowledge.VectorCleanupService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -31,10 +34,15 @@ import org.springframework.web.multipart.MultipartFile;
 public class MaterialController {
     private final MaterialService materials;
     private final CurrentUserService currentUsers;
+    private final IndexingService indexing;
+    private final VectorCleanupService vectorCleanup;
 
-    public MaterialController(MaterialService materials, CurrentUserService currentUsers) {
+    public MaterialController(MaterialService materials, CurrentUserService currentUsers,
+                              IndexingService indexing, VectorCleanupService vectorCleanup) {
         this.materials = materials;
         this.currentUsers = currentUsers;
+        this.indexing = indexing;
+        this.vectorCleanup = vectorCleanup;
     }
 
     @GetMapping
@@ -60,8 +68,17 @@ public class MaterialController {
     @PostMapping("/upload")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> upload(@RequestPart("file") MultipartFile file) {
-        MaterialView material = materials.upload(file, currentUsers.requireTeacher());
+        var teacher = currentUsers.requireTeacher();
+        MaterialView stored = materials.upload(file, teacher);
+        // upload() 返回后其事务已提交，索引失败不会撤销材料、知识条目或原文件。
+        MaterialView material = indexing.indexAfterCommit(stored.id(), teacher.getClassId(), ChunkingOptions.auto());
         return Map.of("materialId", material.id(), "material", material);
+    }
+
+    @PostMapping("/{id}/index/rebuild")
+    public MaterialView rebuildIndex(@PathVariable Long id, @Valid @RequestBody RebuildIndexRequest request) {
+        var teacher = currentUsers.requireTeacher();
+        return indexing.rebuild(id, teacher.getClassId(), request.toOptions());
     }
 
     @PatchMapping("/{id}")
@@ -72,7 +89,9 @@ public class MaterialController {
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable Long id) {
-        materials.delete(id, currentUsers.requireTeacher());
+        var teacher = currentUsers.requireTeacher();
+        materials.delete(id, teacher);
+        vectorCleanup.processMaterial(id);
     }
 
     private ResponseEntity<byte[]> fileResponse(Long id, boolean download) {

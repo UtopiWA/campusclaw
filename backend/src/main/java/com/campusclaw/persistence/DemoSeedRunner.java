@@ -5,9 +5,11 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.core.annotation.Order;
 import org.springframework.util.StringUtils;
 
 @Component
+@Order(0)
 @ConditionalOnProperty(prefix = "app.demo-seed", name = "enabled", havingValue = "true")
 public class DemoSeedRunner implements ApplicationRunner {
     private final AppProperties properties;

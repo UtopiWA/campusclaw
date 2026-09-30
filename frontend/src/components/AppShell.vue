@@ -17,13 +17,15 @@ const navItems = computed(() => isTeacher.value
   ? [
       { key: 'home', label: '教师首页', icon: 'home' },
       { key: 'materials', label: '讲义管理', icon: 'book', to: '/materials' },
+      { key: 'search', label: '知识检索', icon: 'search', to: '/search' },
       { key: 'assistant', label: '助手配置', icon: 'bot' },
       { key: 'homework', label: '作业与改分', icon: 'homework' },
       { key: 'audit', label: '审计与统计', icon: 'audit' },
     ]
   : [
       { key: 'home', label: '学生首页', icon: 'home' },
-      { key: 'materials', label: '讲义与检索', icon: 'book', to: '/materials' },
+      { key: 'materials', label: '讲义资料', icon: 'book', to: '/materials' },
+      { key: 'search', label: '知识检索', icon: 'search', to: '/search' },
       { key: 'assistant', label: '助手对话', icon: 'bot' },
       { key: 'homework', label: '交作业', icon: 'homework' },
       { key: 'audit', label: '学情分析', icon: 'audit' },

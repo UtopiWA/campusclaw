@@ -9,7 +9,7 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-campusclaw}
       MYSQL_USER: ${MYSQL_USER:-campusclaw}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci", "--ngram-token-size=2"]
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
@@ -18,6 +18,18 @@ services:
       timeout: 5s
       retries: 20
       start_period: 20s
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
 
   backend:
     build:
@@ -32,10 +44,23 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       DEMO_SEED_ENABLED: ${DEMO_SEED_ENABLED:-true}
       DEMO_SEED_PASSWORD: ${DEMO_SEED_PASSWORD}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-campusclaw_chunks}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION}
+      CHAT_BASE_URL: ${CHAT_BASE_URL}
+      CHAT_API_KEY: ${CHAT_API_KEY}
+      CHAT_MODEL: ${CHAT_MODEL}
+      RETRIEVAL_CONNECT_TIMEOUT: ${RETRIEVAL_CONNECT_TIMEOUT:-3s}
+      RETRIEVAL_READ_TIMEOUT: ${RETRIEVAL_READ_TIMEOUT:-30s}
     volumes:
       - uploads-data:/app/uploads
     depends_on:
       mysql:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
@@ -57,3 +82,4 @@ services:
 volumes:
   mysql-data:
   uploads-data:
+  qdrant-data:

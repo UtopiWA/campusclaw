@@ -9,6 +9,9 @@ import com.campusclaw.persistence.KnowledgeEntry;
 import com.campusclaw.persistence.KnowledgeEntryRepository;
 import com.campusclaw.persistence.Material;
 import com.campusclaw.persistence.MaterialRepository;
+import com.campusclaw.persistence.KnowledgeChunkRepository;
+import com.campusclaw.persistence.VectorCleanupJob;
+import com.campusclaw.persistence.VectorCleanupJobRepository;
 import com.campusclaw.persistence.UserAccount;
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -40,15 +43,21 @@ public class MaterialService {
     private final MaterialRepository materials;
     private final KnowledgeEntryRepository knowledgeEntries;
     private final TextParser textParser;
+    private final KnowledgeChunkRepository retrievalChunks;
+    private final VectorCleanupJobRepository cleanupJobs;
     private final Path uploadRoot;
     private final long maxUploadBytes;
 
     public MaterialService(MaterialRepository materials,
                            KnowledgeEntryRepository knowledgeEntries,
+                           KnowledgeChunkRepository retrievalChunks,
+                           VectorCleanupJobRepository cleanupJobs,
                            TextParser textParser,
                            AppProperties properties) {
         this.materials = materials;
         this.knowledgeEntries = knowledgeEntries;
+        this.retrievalChunks = retrievalChunks;
+        this.cleanupJobs = cleanupJobs;
         this.textParser = textParser;
         this.uploadRoot = Path.of(properties.uploadDir()).toAbsolutePath().normalize();
         this.maxUploadBytes = properties.maxUploadBytes();
@@ -140,6 +149,9 @@ public class MaterialService {
     @Transactional
     public void delete(Long id, UserAccount teacher) {
         Material material = requireMaterial(id, teacher.getClassId());
+        String pointIds = retrievalChunks.findAllByMaterialIdAndClassIdOrderByChunkIndex(id, teacher.getClassId())
+                .stream().map(chunk -> chunk.getId().toString())
+                .collect(java.util.stream.Collectors.joining(",", "[", "]"));
         Path original = resolveStoredPath(material.getStoredPath());
         Path quarantined = null;
         try {
@@ -153,6 +165,7 @@ public class MaterialService {
             }
             materials.delete(material);
             materials.flush();
+            cleanupJobs.saveAndFlush(new VectorCleanupJob(id, pointIds));
         } catch (IOException exception) {
             restoreQuietly(quarantined, original);
             throw new StorageException("Could not delete material file", exception);
