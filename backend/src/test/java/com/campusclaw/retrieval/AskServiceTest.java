@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 import com.campusclaw.config.AppProperties;
 import com.campusclaw.common.DependencyUnavailableException;
@@ -82,6 +83,64 @@ class AskServiceTest {
                 new AskRequest("问题", List.of(), null, null, null, null, null), 1L))
                 .isInstanceOf(DependencyUnavailableException.class)
                 .hasMessage("Chat service is temporarily unavailable");
+    }
+
+    @Test
+    void normalizesCommonCitationFormatsAndRemovesOutOfRangeNumbers() {
+        RetrievalService retrieval = mock(RetrievalService.class);
+        ChatGateway chat = mock(ChatGateway.class);
+        when(retrieval.search(any(), eq(1L))).thenReturn(new SearchResponse(
+                SearchMode.HYBRID, null, List.of(hit(3L, "第一份依据"), hit(6L, "第二份依据"))));
+        when(chat.complete(any())).thenReturn("结论【1】，补充（2），忽略越界［9］");
+
+        AskResponse response = new AskService(retrieval, chat, properties()).ask(
+                new AskRequest("问题", List.of(), null, null, null, null, null), 1L);
+
+        assertThat(response.answer()).isEqualTo("结论[1]，补充[2]，忽略越界");
+        assertThat(response.citations()).extracting(AskResponse.Citation::number).containsExactly(1, 2);
+        assertThat(response.citations()).extracting(AskResponse.Citation::excerpt)
+                .containsExactly("第一份依据", "第二份依据");
+        verify(chat).complete(any());
+    }
+
+    @Test
+    void repairsAnAnswerThatInitiallyOmitsCitations() {
+        RetrievalService retrieval = mock(RetrievalService.class);
+        ChatGateway chat = mock(ChatGateway.class);
+        when(retrieval.search(any(), eq(1L))).thenReturn(
+                new SearchResponse(SearchMode.HYBRID, null, List.of(hit(3L, "本班依据"))));
+        when(chat.complete(any())).thenReturn("没有编号的初稿", "带依据的修订回答 [1]");
+
+        AskResponse response = new AskService(retrieval, chat, properties()).ask(
+                new AskRequest("问题", List.of(), null, null, null, null, null), 1L);
+
+        assertThat(response.answer()).isEqualTo("带依据的修订回答 [1]");
+        assertThat(response.citations()).extracting(AskResponse.Citation::number).containsExactly(1);
+        verify(chat, times(2)).complete(any());
+    }
+
+    @Test
+    void replacesAnAnswerThatStillHasNoCitationsWithInspectableEvidence() {
+        RetrievalService retrieval = mock(RetrievalService.class);
+        ChatGateway chat = mock(ChatGateway.class);
+        when(retrieval.search(any(), eq(1L))).thenReturn(new SearchResponse(
+                SearchMode.HYBRID, null, List.of(hit(3L, "第一份依据"), hit(6L, "第二份依据"))));
+        when(chat.complete(any())).thenReturn("没有编号的初稿", "仍然没有编号");
+
+        AskResponse response = new AskService(retrieval, chat, properties()).ask(
+                new AskRequest("问题", List.of(), null, null, null, null, null), 1L);
+
+        assertThat(response.answer()).isEqualTo(AskService.UNVERIFIABLE_ANSWER);
+        assertThat(response.answer()).doesNotContain("初稿", "仍然没有编号");
+        assertThat(response.citations()).extracting(AskResponse.Citation::number).containsExactly(1, 2);
+        assertThat(response.citations()).extracting(AskResponse.Citation::excerpt)
+                .containsExactly("第一份依据", "第二份依据");
+        verify(chat, times(2)).complete(any());
+    }
+
+    private RetrievalHit hit(Long chunkId, String excerpt) {
+        return new RetrievalHit(3L, "本班讲义", 4L, chunkId, Math.toIntExact(chunkId), 0, 4,
+                excerpt, 1, 0.03, 1.0, 1, 0.8, 1);
     }
 
     private AppProperties properties() {

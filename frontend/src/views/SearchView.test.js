@@ -59,11 +59,15 @@ describe('SearchView', () => {
     expect(wrapper.text()).toContain('资料中未找到相关内容')
 
     askKnowledge.mockResolvedValueOnce({ answer: '结论 [1]', citations: [{
-      number: 1, materialId: 1, materialTitle: '讲义', chunkId: 2, chunkIndex: 0, excerpt: '依据',
+      number: 1, materialId: 1, materialTitle: '讲义', chunkId: 2, chunkIndex: 0,
+      excerpt: '<strong>可直接核对的依据片段</strong>',
     }] })
     await wrapper.find('.ask-action button').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('[1] 讲义')
+    expect(wrapper.find('.citation-excerpt').text()).toContain('<strong>可直接核对的依据片段</strong>')
+    expect(wrapper.find('.citation-excerpt strong').exists()).toBe(false)
+    expect(wrapper.find('.citation-card a').attributes('data-to')).toBe('/materials?material=1')
   })
 
   it('validates input, prevents duplicate submission and distinguishes 400 from 503', async () => {

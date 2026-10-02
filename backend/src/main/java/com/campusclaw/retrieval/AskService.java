@@ -16,7 +16,12 @@ import org.springframework.stereotype.Service;
 @Service
 public class AskService {
     private static final Pattern CITATION = Pattern.compile("\\[(\\d+)]");
-    private static final String SYSTEM_RULE = "你是 CampusClaw 教研助手。只能根据编号资料回答；每个事实后标注资料编号，如 [1]。资料不足时明确说明，不得编造。";
+    private static final Pattern CITATION_VARIANT = Pattern.compile(
+            "(?:\\[|［|【|\\(|（)\\s*(\\d+)\\s*(?:]|］|】|\\)|）)");
+    private static final String SYSTEM_RULE = "你是 CampusClaw 教研助手。只能根据编号资料回答，不得补充资料外事实。"
+            + "每个事实句末必须使用半角方括号标注一个或多个资料编号，例如 [1] 或 [1][2]；"
+            + "回答必须至少包含一个有效编号，不得使用【1】、（1）或其他引用格式。资料不足时明确说明，不得编造。";
+    static final String UNVERIFIABLE_ANSWER = "模型未能生成可验证引用，请直接核对下方依据片段。";
 
     private final RetrievalService retrieval;
     private final ChatGateway chat;
@@ -41,8 +46,24 @@ public class AskService {
             messages.add(new ChatMessage(item.role().toLowerCase(), item.content()));
         }
         messages.add(new ChatMessage("user", buildGroundedPrompt(question, evidence.hits())));
-        String answer = removeInvalidCitations(chat.complete(List.copyOf(messages)), evidence.hits().size());
-        return new AskResponse(answer, citationsUsedBy(answer, evidence.hits()));
+        String answer = normalizeCitations(chat.complete(List.copyOf(messages)), evidence.hits().size());
+        List<AskResponse.Citation> citations = citationsUsedBy(answer, evidence.hits());
+        if (!citations.isEmpty()) {
+            return new AskResponse(answer, citations);
+        }
+
+        // 部分兼容模型会忽略首次引用要求；只允许一次不增加事实的格式修订。
+        List<ChatMessage> repairMessages = new ArrayList<>(messages);
+        repairMessages.add(new ChatMessage("assistant", answer));
+        repairMessages.add(new ChatMessage("user", citationRepairInstruction(evidence.hits().size())));
+        String repaired = normalizeCitations(chat.complete(List.copyOf(repairMessages)), evidence.hits().size());
+        List<AskResponse.Citation> repairedCitations = citationsUsedBy(repaired, evidence.hits());
+        if (!repairedCitations.isEmpty()) {
+            return new AskResponse(repaired, repairedCitations);
+        }
+
+        // 不向客户端返回无法与资料建立关系的自由回答，改为提供可直接核对的候选片段。
+        return new AskResponse(UNVERIFIABLE_ANSWER, allCitations(evidence.hits()));
     }
 
     String buildGroundedPrompt(String question, List<RetrievalHit> hits) {
@@ -77,24 +98,41 @@ public class AskService {
         List<AskResponse.Citation> citations = new ArrayList<>();
         for (int number = 1; number <= hits.size(); number++) {
             if (used.contains(number)) {
-                RetrievalHit hit = hits.get(number - 1);
-                citations.add(new AskResponse.Citation(number, hit.materialId(), hit.materialTitle(),
-                        hit.chunkId(), hit.chunkIndex(), hit.excerpt()));
+                citations.add(toCitation(number, hits.get(number - 1)));
             }
         }
         return List.copyOf(citations);
     }
 
-    private String removeInvalidCitations(String answer, int evidenceCount) {
-        Matcher matcher = CITATION.matcher(answer);
+    private List<AskResponse.Citation> allCitations(List<RetrievalHit> hits) {
+        List<AskResponse.Citation> citations = new ArrayList<>(hits.size());
+        for (int index = 0; index < hits.size(); index++) {
+            citations.add(toCitation(index + 1, hits.get(index)));
+        }
+        return List.copyOf(citations);
+    }
+
+    private AskResponse.Citation toCitation(int number, RetrievalHit hit) {
+        return new AskResponse.Citation(number, hit.materialId(), hit.materialTitle(),
+                hit.chunkId(), hit.chunkIndex(), hit.excerpt());
+    }
+
+    private String normalizeCitations(String answer, int evidenceCount) {
+        Matcher matcher = CITATION_VARIANT.matcher(answer);
         StringBuffer sanitized = new StringBuffer();
         while (matcher.find()) {
             int number = Integer.parseInt(matcher.group(1));
             matcher.appendReplacement(sanitized,
-                    number >= 1 && number <= evidenceCount ? Matcher.quoteReplacement(matcher.group()) : "");
+                    number >= 1 && number <= evidenceCount ? "[" + number + "]" : "");
         }
         matcher.appendTail(sanitized);
         return sanitized.toString().trim();
+    }
+
+    private String citationRepairInstruction(int evidenceCount) {
+        return "上一回答缺少可验证的半角引用编号。请保持原有事实不变、不得新增内容，"
+                + "仅重写为每个事实句末带 [n] 的回答；n 只能是 1 到 " + evidenceCount
+                + "，至少使用一个编号，只输出修订后的回答。";
     }
 
     private String validateQuestion(String value) {

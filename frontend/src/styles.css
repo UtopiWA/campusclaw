@@ -202,10 +202,13 @@ h1, h2, h3, p { margin-top: 0; }
 .answer-body { padding: 22px; color: #3e434b; font-size: 14px; line-height: 1.9; white-space: pre-wrap; }
 .answer-body p { margin: 0; }
 .citation-list { display: grid; gap: 8px; margin: 0; padding: 0 22px 22px; list-style: none; }
-.citation-list li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #f8f9fa; border-radius: 8px; font-size: 11px; }
-.citation-list strong { color: #464b53; }
-.citation-list span { color: #9297a0; }
-.citation-list a { margin-left: auto; color: var(--brand-700); font-weight: 700; }
+.citation-card { min-width: 0; padding: 13px 14px; background: #f8f9fa; border: 1px solid #eceef1; border-radius: 9px; }
+.citation-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.citation-heading > div { display: grid; min-width: 0; gap: 3px; }
+.citation-heading strong { color: #464b53; font-size: 12px; overflow-wrap: anywhere; }
+.citation-heading span { color: #9297a0; font-size: 10px; }
+.citation-heading a { flex: 0 0 auto; color: var(--brand-700); font-size: 11px; font-weight: 700; }
+.citation-excerpt { margin: 10px 0 0; color: #5d626b; font-size: 12px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .index-badge { padding: 3px 7px; border-radius: 5px; font-size: 9px; font-weight: 700; }
 .index-badge--ready { color: #267348; background: #e7f6ed; }
 .index-badge--pending, .index-badge--indexing { color: #906316; background: #fbf1dc; }
@@ -317,6 +320,7 @@ h1, h2, h3, p { margin-top: 0; }
   .ask-action { align-items: stretch; flex-direction: column; }
   .hit-card { grid-template-columns: 34px minmax(0, 1fr); }
   .hit-card > .button { grid-column: 1 / -1; width: 100%; }
+  .citation-heading { align-items: stretch; flex-direction: column; gap: 7px; }
   .login-layout { display: block; }
   .login-brand-panel { display: none; }
   .login-form-panel { min-height: 100vh; padding: 28px; background: radial-gradient(circle at 100% 0, var(--brand-50), transparent 40%), #fff; }

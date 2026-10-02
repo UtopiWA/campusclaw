@@ -95,10 +95,15 @@ function score(value) {
         <div class="content-card-header"><div><h2>依据回答</h2><p>回答中的编号与下方引用一一对应</p></div></div>
         <div class="answer-body"><p>{{ answer.answer }}</p></div>
         <ol v-if="answer.citations?.length" class="citation-list">
-          <li v-for="citation in answer.citations" :key="citation.number">
-            <strong>[{{ citation.number }}] {{ citation.materialTitle }}</strong>
-            <span>切片 {{ citation.chunkIndex + 1 }}</span>
-            <RouterLink :to="`/materials?material=${citation.materialId}`">查看材料</RouterLink>
+          <li v-for="citation in answer.citations" :key="citation.number" class="citation-card">
+            <div class="citation-heading">
+              <div>
+                <strong>[{{ citation.number }}] {{ citation.materialTitle }}</strong>
+                <span>切片 {{ citation.chunkIndex + 1 }} · Chunk #{{ citation.chunkId }}</span>
+              </div>
+              <RouterLink :to="`/materials?material=${citation.materialId}`">查看全文</RouterLink>
+            </div>
+            <p class="citation-excerpt">{{ citation.excerpt }}</p>
           </li>
         </ol>
         <div v-else class="retrieval-empty"><AppIcon name="search" :size="26" /><strong>{{ answer.answer }}</strong><span>未调用自由回答，也没有生成伪引用。</span></div>
