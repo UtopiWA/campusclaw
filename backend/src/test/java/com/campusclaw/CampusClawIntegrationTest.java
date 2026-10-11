@@ -26,6 +26,7 @@ import com.campusclaw.gateway.ChatGateway;
 import com.campusclaw.persistence.KnowledgeChunkRepository;
 import com.campusclaw.persistence.VectorCleanupJobRepository;
 import com.campusclaw.knowledge.VectorCleanupService;
+import com.campusclaw.material.MaterialService;
 import com.campusclaw.common.DependencyUnavailableException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -102,6 +103,7 @@ class CampusClawIntegrationTest {
     @Autowired KnowledgeChunkRepository retrievalChunks;
     @Autowired VectorCleanupJobRepository cleanupJobs;
     @Autowired VectorCleanupService vectorCleanup;
+    @Autowired MaterialService materialService;
     @Autowired JdbcTemplate jdbc;
     @MockBean EmbeddingGateway embeddings;
     @MockBean VectorStoreGateway vectors;
@@ -261,12 +263,21 @@ class CampusClawIntegrationTest {
                 .andExpect(jsonPath("$.material.title").value("lesson"))
                 .andExpect(jsonPath("$.material.hasFile").value(true))
                 .andExpect(jsonPath("$.material.fileSizeBytes").value(uploadedBytes.length))
+                .andExpect(jsonPath("$.material.indexStatus").value("PENDING"))
                 .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("storedPath"))))
                 .andReturn();
         long uploadedId = ((Number) com.jayway.jsonpath.JsonPath.read(
                 upload.getResponse().getContentAsString(StandardCharsets.UTF_8), "$.materialId")).longValue();
         Path uploadedPath = uploadDir.resolve(materials.findById(uploadedId).orElseThrow().getStoredPath());
         assertThat(Files.exists(uploadedPath)).isTrue();
+        awaitMaterialStatus(uploadedId, "READY");
+        long teacherClassId = users.findByUsername("teacher-a").orElseThrow().getClassId();
+        int entryCount = knowledgeEntries.findAllByMaterialIdAndClassIdOrderByChunkIndex(
+                uploadedId, teacherClassId).size();
+        assertThat(entryCount).isPositive();
+        materialService.parseStoredMaterial(uploadedId, teacherClassId);
+        assertThat(knowledgeEntries.findAllByMaterialIdAndClassIdOrderByChunkIndex(
+                uploadedId, teacherClassId)).hasSize(entryCount);
 
         mockMvc.perform(get("/api/materials/{id}/content", uploadedId).with(bearer(studentASession)))
                 .andExpect(status().isOk())
@@ -301,7 +312,7 @@ class CampusClawIntegrationTest {
     }
 
     @Test
-    void rejectsInvalidFilesAndRollsBackDatabaseFailures() throws Exception {
+    void rejectsRequestInvalidFilesAndMarksBackgroundParsingFailures() throws Exception {
         String teacherSession = login("teacher-a");
         long before = materials.count();
         long filesBefore = regularFileCount(uploadDir);
@@ -318,8 +329,6 @@ class CampusClawIntegrationTest {
                 .andExpect(status().isBadRequest());
         MockMultipartFile malformed = new MockMultipartFile(
                 "file", "bad.txt", "text/plain", new byte[] {(byte) 0xC3, (byte) 0x28});
-        mockMvc.perform(multipart("/api/materials/upload").file(malformed).with(bearer(teacherSession)))
-                .andExpect(status().isBadRequest());
         MockMultipartFile oversized = new MockMultipartFile(
                 "file", "large.txt", "text/plain", new byte[2 * 1024 * 1024 + 1]);
         mockMvc.perform(multipart("/api/materials/upload").file(oversized).with(bearer(teacherSession)))
@@ -327,12 +336,34 @@ class CampusClawIntegrationTest {
         assertThat(materials.count()).isEqualTo(before);
         assertThat(regularFileCount(uploadDir)).isEqualTo(filesBefore);
 
+        MvcResult malformedUpload = mockMvc.perform(multipart("/api/materials/upload")
+                        .file(malformed).with(bearer(teacherSession)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.material.indexStatus").value("PENDING"))
+                .andReturn();
+        long malformedId = ((Number) com.jayway.jsonpath.JsonPath.read(
+                malformedUpload.getResponse().getContentAsString(StandardCharsets.UTF_8), "$.materialId")).longValue();
+        awaitMaterialStatus(malformedId, "FAILED");
+        assertThat(knowledgeEntries.findAllByMaterialIdAndClassIdOrderByChunkIndex(
+                malformedId, users.findByUsername("teacher-a").orElseThrow().getClassId())).isEmpty();
+
         doThrow(new DataIntegrityViolationException("injected database failure"))
                 .when(knowledgeEntries).save(any(KnowledgeEntry.class));
         MockMultipartFile valid = new MockMultipartFile(
                 "file", "rollback.txt", "text/plain", "必须回滚".getBytes(StandardCharsets.UTF_8));
-        mockMvc.perform(multipart("/api/materials/upload").file(valid).with(bearer(teacherSession)))
-                .andExpect(status().is5xxServerError());
+        MvcResult failedEntryUpload = mockMvc.perform(multipart("/api/materials/upload")
+                        .file(valid).with(bearer(teacherSession)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.material.indexStatus").value("PENDING"))
+                .andReturn();
+        long failedEntryId = ((Number) com.jayway.jsonpath.JsonPath.read(
+                failedEntryUpload.getResponse().getContentAsString(StandardCharsets.UTF_8), "$.materialId")).longValue();
+        awaitMaterialStatus(failedEntryId, "FAILED");
+
+        mockMvc.perform(delete("/api/materials/{id}", malformedId).with(bearer(teacherSession)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(delete("/api/materials/{id}", failedEntryId).with(bearer(teacherSession)))
+                .andExpect(status().isNoContent());
         assertThat(materials.count()).isEqualTo(before);
         assertThat(regularFileCount(uploadDir)).isEqualTo(filesBefore);
     }
@@ -372,12 +403,13 @@ class CampusClawIntegrationTest {
                         .file(new MockMultipartFile("file", "reading.md", "text/markdown", content))
                         .with(bearer(teacher)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.material.indexStatus").value("READY"))
+                .andExpect(jsonPath("$.material.indexStatus").value("PENDING"))
                 .andExpect(jsonPath("$.material.indexStrategy").value("AUTO"))
                 .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("indexError"))))
                 .andReturn();
         long materialId = ((Number) com.jayway.jsonpath.JsonPath.read(
                 upload.getResponse().getContentAsString(StandardCharsets.UTF_8), "$.materialId")).longValue();
+        awaitMaterialStatus(materialId, "READY");
         var oldChunk = retrievalChunks.findAllByMaterialIdAndClassIdOrderByChunkIndex(materialId, classA).get(0);
         mockMvc.perform(post("/api/materials/{id}/index/rebuild", materialId)
                         .with(bearer(teacher)).contentType(MediaType.APPLICATION_JSON)
@@ -483,10 +515,11 @@ class CampusClawIntegrationTest {
                                 "索引失败时仍保留原始材料".getBytes(StandardCharsets.UTF_8)))
                         .with(bearer(teacher)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.material.indexStatus").value("FAILED"))
+                .andExpect(jsonPath("$.material.indexStatus").value("PENDING"))
                 .andReturn();
         long materialId = ((Number) com.jayway.jsonpath.JsonPath.read(
                 upload.getResponse().getContentAsString(StandardCharsets.UTF_8), "$.materialId")).longValue();
+        awaitMaterialStatus(materialId, "FAILED");
         var material = materials.findById(materialId).orElseThrow();
         assertThat(Files.exists(uploadDir.resolve(material.getStoredPath()))).isTrue();
         assertThat(knowledgeEntries.findAllByMaterialIdAndClassIdOrderByChunkIndex(materialId, classId)).isNotEmpty();
@@ -508,6 +541,19 @@ class CampusClawIntegrationTest {
         reset(vectors);
         vectorCleanup.processMaterial(materialId);
         assertThat(cleanupJobs.findAllByMaterialId(materialId)).isEmpty();
+    }
+
+    private void awaitMaterialStatus(long materialId, String expected) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(8);
+        while (System.nanoTime() < deadline) {
+            var material = materials.findById(materialId);
+            if (material.isPresent() && material.get().getIndexStatus().name().equals(expected)) {
+                return;
+            }
+            Thread.sleep(25);
+        }
+        assertThat(materials.findById(materialId).orElseThrow().getIndexStatus().name())
+                .isEqualTo(expected);
     }
 
     private String login(String username) throws Exception {

@@ -84,4 +84,12 @@ public class IndexStateService {
         chunks.findAllByIdInAndClassIdAndIndexStatus(chunkIds, classId, IndexStatus.PENDING)
                 .forEach(chunk -> chunk.markFailed("Index dependency unavailable"));
     }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markMaterialFailed(Long materialId, Long classId, String message) {
+        materials.findByIdAndClassId(materialId, classId).ifPresent(material -> {
+            material.markFailed(message);
+            materials.saveAndFlush(material);
+        });
+    }
 }

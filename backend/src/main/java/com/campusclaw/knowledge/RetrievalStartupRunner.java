@@ -13,16 +13,16 @@ import org.springframework.stereotype.Component;
 @ConditionalOnProperty(prefix = "app.retrieval", name = "initialize-vector-store", havingValue = "true")
 public class RetrievalStartupRunner implements ApplicationRunner {
     private final VectorStoreGateway vectors;
-    private final IndexingService indexing;
+    private final MaterialIngestionService ingestion;
 
-    public RetrievalStartupRunner(VectorStoreGateway vectors, IndexingService indexing) {
+    public RetrievalStartupRunner(VectorStoreGateway vectors, MaterialIngestionService ingestion) {
         this.vectors = vectors;
-        this.indexing = indexing;
+        this.ingestion = ingestion;
     }
 
     @Override
     public void run(ApplicationArguments args) {
         vectors.ensureCollection();
-        indexing.backfill();
+        ingestion.backfill();
     }
 }

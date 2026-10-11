@@ -1,15 +1,18 @@
 package com.campusclaw.material;
 
 import com.campusclaw.auth.CurrentUserService;
-import com.campusclaw.knowledge.ChunkingOptions;
 import com.campusclaw.knowledge.IndexingService;
+import com.campusclaw.knowledge.MaterialIngestionService;
 import com.campusclaw.knowledge.VectorCleanupService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
-import java.nio.charset.StandardCharsets;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -32,16 +35,21 @@ import org.springframework.web.multipart.MultipartFile;
 @RestController
 @RequestMapping("/api/materials")
 public class MaterialController {
+    private static final Logger log = LoggerFactory.getLogger(MaterialController.class);
+
     private final MaterialService materials;
     private final CurrentUserService currentUsers;
     private final IndexingService indexing;
+    private final MaterialIngestionService ingestion;
     private final VectorCleanupService vectorCleanup;
 
     public MaterialController(MaterialService materials, CurrentUserService currentUsers,
-                              IndexingService indexing, VectorCleanupService vectorCleanup) {
+                              IndexingService indexing, MaterialIngestionService ingestion,
+                              VectorCleanupService vectorCleanup) {
         this.materials = materials;
         this.currentUsers = currentUsers;
         this.indexing = indexing;
+        this.ingestion = ingestion;
         this.vectorCleanup = vectorCleanup;
     }
 
@@ -70,9 +78,14 @@ public class MaterialController {
     public Map<String, Object> upload(@RequestPart("file") MultipartFile file) {
         var teacher = currentUsers.requireTeacher();
         MaterialView stored = materials.upload(file, teacher);
-        // upload() 返回后其事务已提交，索引失败不会撤销材料、知识条目或原文件。
-        MaterialView material = indexing.indexAfterCommit(stored.id(), teacher.getClassId(), ChunkingOptions.auto());
-        return Map.of("materialId", material.id(), "material", material);
+        try {
+            // upload() 返回时主事务已提交，后台线程只携带受控标识重新加载数据。
+            ingestion.ingestAsync(stored.id(), teacher.getClassId());
+        } catch (TaskRejectedException exception) {
+            // PENDING 状态会由启动补偿恢复，不把已成功保存的材料误报为上传失败。
+            log.warn("Material {} ingestion queue is full; leaving it pending", stored.id());
+        }
+        return Map.of("materialId", stored.id(), "material", stored);
     }
 
     @PostMapping("/{id}/index/rebuild")

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import AppIcon from '../components/AppIcon.vue'
 import AppShell from '../components/AppShell.vue'
 import BaseModal from '../components/BaseModal.vue'
@@ -29,6 +29,7 @@ const rebuildMax = ref(800)
 const rebuildOverlap = ref(10)
 const rebuildBreak = ref('PARAGRAPH')
 const rebuildPreprocess = ref(false)
+let statusRefreshTimer = null
 
 const isTeacher = computed(() => authState.user?.role === 'teacher')
 const fileCount = computed(() => materials.value.filter((material) => material.hasFile).length)
@@ -45,9 +46,17 @@ async function loadMaterials() {
   error.value = ''
   try {
     materials.value = await apiRequest('/api/materials')
+    scheduleStatusRefresh()
   } catch (exception) {
     error.value = exception.message
   }
+}
+
+function scheduleStatusRefresh() {
+  if (statusRefreshTimer) clearTimeout(statusRefreshTimer)
+  const processing = materials.value.some((material) => ['PENDING', 'INDEXING'].includes(material.indexStatus))
+  // 只在存在后台任务时短轮询，完成或失败后自动停止。
+  statusRefreshTimer = processing ? setTimeout(loadMaterials, 1500) : null
 }
 
 function chooseFile(event) {
@@ -75,12 +84,12 @@ async function upload() {
   const data = new FormData()
   data.append('file', selectedFile.value)
   try {
-    // The backend validates, stores and parses the file as one coordinated operation.
+    // 上传响应只确认原文件已保存，正文解析和索引会在后台继续执行。
     await apiRequest('/api/materials/upload', { method: 'POST', body: data })
     uploadOpen.value = false
     selectedFile.value = null
     if (fileInput.value) fileInput.value.value = ''
-    notice.value = '讲义已上传，并完成知识库入库。'
+    notice.value = '讲义已上传，系统正在后台解析并建立索引。'
     await loadMaterials()
   } catch (exception) {
     error.value = exception.message
@@ -194,7 +203,7 @@ async function rebuildIndex() {
 }
 
 function indexLabel(status) {
-  return ({ PENDING: '待索引', INDEXING: '索引中', READY: '可检索', FAILED: '索引失败' })[status] || '待索引'
+  return ({ PENDING: '待解析', INDEXING: '解析/索引中', READY: '可检索', FAILED: '处理失败' })[status] || '待解析'
 }
 
 async function remove() {
@@ -233,6 +242,9 @@ function fileKind(material) {
 }
 
 onMounted(loadMaterials)
+onBeforeUnmount(() => {
+  if (statusRefreshTimer) clearTimeout(statusRefreshTimer)
+})
 </script>
 
 <template>
@@ -313,7 +325,7 @@ onMounted(loadMaterials)
     </div>
   </AppShell>
 
-  <BaseModal v-if="uploadOpen" title="上传讲义并入库" description="系统将解析正文并生成本班知识片段。" @close="closeUpload">
+  <BaseModal v-if="uploadOpen" title="上传讲义并入库" description="文件保存后将在后台解析正文并生成本班知识片段。" @close="closeUpload">
     <label class="file-drop" :class="{ 'file-drop--active': dragActive, 'file-drop--selected': selectedFile }" @dragenter.prevent="dragActive = true" @dragover.prevent="dragActive = true" @dragleave.prevent="dragActive = false" @drop.prevent="dropFile">
       <input ref="fileInput" type="file" accept=".txt,.md,text/plain,text/markdown" @change="chooseFile" />
       <span class="file-drop-icon"><AppIcon :name="selectedFile ? 'file' : 'upload'" :size="26" /></span>
@@ -322,7 +334,7 @@ onMounted(loadMaterials)
     </label>
     <template #footer>
       <button class="button button--secondary" type="button" :disabled="busy" @click="closeUpload">取消</button>
-      <button class="button button--primary" type="button" :disabled="!selectedFile || busy" @click="upload">{{ busy ? '正在解析入库…' : '上传并入库' }}</button>
+      <button class="button button--primary" type="button" :disabled="!selectedFile || busy" @click="upload">{{ busy ? '正在上传…' : '上传并后台解析' }}</button>
     </template>
   </BaseModal>
 

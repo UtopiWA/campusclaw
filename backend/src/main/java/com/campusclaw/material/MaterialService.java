@@ -104,11 +104,10 @@ public class MaterialService {
     @Transactional
     public MaterialView upload(MultipartFile file, UserAccount teacher) {
         UploadContent content = validateAndRead(file);
-        List<String> chunks = textParser.parse(content.bytes());
         Path temp = null;
         Path destination = null;
         try {
-            // Stage bytes first; the final class-scoped name is not exposed until parsing and persistence succeed.
+            // 请求线程只提交原文件和材料元数据，正文解析由提交后的后台任务执行。
             Path tempDir = uploadRoot.resolve(".tmp");
             Path classDir = uploadRoot.resolve(teacher.getClassId().toString());
             Files.createDirectories(tempDir);
@@ -120,13 +119,8 @@ public class MaterialService {
             destination = classDir.resolve(storedName).normalize();
             requireWithinRoot(destination);
 
-            // Material metadata and searchable chunks share one database transaction.
             Material material = materials.saveAndFlush(new Material(
                     teacher.getClassId(), content.title(), content.originalFilename(), null, teacher.getId()));
-            for (int index = 0; index < chunks.size(); index++) {
-                knowledgeEntries.save(new KnowledgeEntry(material.getId(), teacher.getClassId(), index, chunks.get(index)));
-            }
-            knowledgeEntries.flush();
 
             // Publish the file atomically, then register rollback cleanup for the remaining transaction lifetime.
             moveAtomically(temp, destination);
@@ -143,6 +137,29 @@ public class MaterialService {
             deleteQuietly(temp);
             deleteQuietly(destination);
             throw exception;
+        }
+    }
+
+    @Transactional
+    public void parseStoredMaterial(Long materialId, Long classId) {
+        Material material = requireMaterial(materialId, classId);
+        // 重试和启动补偿可重复调用；已有正文时不得再次插入相同知识条目。
+        if (!knowledgeEntries.findAllByMaterialIdAndClassIdOrderByChunkIndex(materialId, classId).isEmpty()) {
+            return;
+        }
+        Path storedFile = resolveStoredPath(material.getStoredPath(), classId);
+        if (storedFile == null || !Files.isRegularFile(storedFile, LinkOption.NOFOLLOW_LINKS)) {
+            throw new StorageException("Could not read material file",
+                    new IOException("Stored material file is missing"));
+        }
+        try {
+            List<String> chunks = textParser.parse(Files.readAllBytes(storedFile));
+            for (int index = 0; index < chunks.size(); index++) {
+                knowledgeEntries.save(new KnowledgeEntry(materialId, classId, index, chunks.get(index)));
+            }
+            knowledgeEntries.flush();
+        } catch (IOException exception) {
+            throw new StorageException("Could not read material file", exception);
         }
     }
 
