@@ -12,7 +12,8 @@
 - [x] 2.2 在同一 migration 创建不依赖材料外键的 `vector_cleanup_jobs`，包含待删除 point ID、状态、重试次数和时间字段；验证：删除材料后清理任务仍可独立保留，且表中不保存正文、向量或密钥。
 - [x] 2.3 新增材料索引状态映射、`KnowledgeChunk`、`VectorCleanupJob` 实体与 Repository，所有读取正文的查询都要求 `classId` 和 READY 状态；验证：执行 Repository 测试，A 班查询无法返回 B 班或 FAILED/INDEXING 切片。
 - [x] 2.4 为 MySQL Compose 和 Testcontainers 设置 `ngram_token_size=2`，保持 `ddl-auto=validate`；验证：执行数据库上下文测试，Hibernate 校验通过，中文两字词可由全文索引命中。
-- [x] 2.5 扩展 `MaterialView` 返回 `indexStatus`、`indexStrategy` 和 `indexedAt`，不返回内部错误详情或存储路径；验证：材料 API 集成测试断言新增状态存在，响应仍不包含 `storedPath`、`indexError` 或服务地址。
+- [ ] 2.5 扩展 `MaterialView` 返回 `indexStatus`、`indexStrategy`、`indexedAt`、`processingStage`、稳定 `failureCode` 和 `retryable`，不返回内部异常详情或存储路径；验证：材料 API 集成测试覆盖正常与失败状态，响应不包含 `storedPath`、`indexError`、堆栈、供应商原文或服务地址。
+- [ ] 2.6 新增后续 Flyway migration 持久化 `processing_stage`、`failure_code` 和 `retryable`，不修改已经发布的 V3；验证：已有数据库从 V3 升级和空数据库全量迁移均成功，历史 READY/FAILED 数据获得兼容默认值。
 
 ## 3. 确定性切分
 
@@ -35,12 +36,15 @@
 
 - [x] 5.1 实现材料索引状态机和独立的短事务操作：INDEXING、PENDING chunk、READY、FAILED；验证：`IndexingServiceTest` 覆盖合法转换和重复调用，检索 Repository 在非 READY 状态返回空。
 - [x] 5.2 实现默认索引流程：逐条知识正文切分、持久化取得 chunk ID、批量嵌入、Qdrant upsert 后标记 READY；验证：集成测试断言 Qdrant point ID、MySQL chunk ID 和 payload `chunk_id` 相同，payload 不含正文。
-- [x] 5.3 将索引放在现有材料/知识条目提交之后，并让上传响应携带最终 READY 或 FAILED 状态；验证：模拟嵌入失败时上传仍返回 HTTP 201，材料、原文件和知识条目存在，FAILED 切片不可检索且无半成品向量。
-- [x] 5.4 在 Demo seed 完成后幂等补齐旧材料和种子知识条目的 AUTO 索引；验证：连续运行两次补索引，第二次不增加 chunk 或 point 数量，单材料失败不阻止应用启动。
+- [x] 5.3 将索引放在材料和知识条目提交之后，索引失败不得回滚已提交原文件与正文；验证：模拟嵌入失败时材料、原文件和知识条目保留，FAILED 切片不可检索且无半成品向量。
+- [ ] 5.4 在应用就绪后以有界批量异步补齐 PENDING、陈旧 INDEXING 以及种子知识条目的 AUTO 索引，不在启动线程同步处理，也不无条件重跑 FAILED；验证：应用可在积压或网关缓慢时先完成启动，连续恢复不增加 chunk/point 数量，永久失败在重启后不再自动执行。
 - [x] 5.5 实现教师 `POST /api/materials/{id}/index/rebuild`，接收三种策略并按本次参数先移除旧索引再重建；验证：集成测试确认旧 point ID 消失、新策略生效，非法配置返回 400 且现有索引不被替换。
-- [x] 5.6 为重建接口执行教师角色与 `id + session classId` 查询；验证：学生请求返回 403，A 班教师请求 B 班或不存在材料均返回相同 404，目标索引未变化。
+- [x] 5.6 为重建接口执行教师角色与 `id + authenticated classId` 查询；验证：学生请求返回 403，A 班教师请求 B 班或不存在材料均返回相同 404，目标索引未变化。
 - [x] 5.7 将材料删除接入 `vector_cleanup_jobs`，提交后立即清理并由启动/定时任务重试失败项；验证：模拟 Qdrant 删除失败后材料和 MySQL chunks 已删除、job 保留，重试成功后 point 与 job 消失，残留 point 不能通过回表形成命中。
-- [x] 5.8 将上传改为先提交原文件与 PENDING 材料，再由有界 Spring 执行器异步解析知识条目并建立索引；解析失败标记 FAILED，启动补偿可恢复中断任务；验证：Controller 测试确认 HTTP 201 不等待解析，后台服务测试覆盖成功、非法 UTF-8、重复执行和失败状态。
+- [x] 5.8 将上传改为先提交原文件与 PENDING 材料，再由有界 Spring 执行器异步解析知识条目并建立索引；解析失败标记 FAILED；验证：Controller 测试确认 HTTP 201 不等待解析，后台服务测试覆盖成功、非法 UTF-8、重复执行和失败状态。原子认领、失败分类与非阻塞恢复由后续条目补齐。
+- [ ] 5.9 为后台处理增加数据库条件更新式原子认领、陈旧 INDEXING 恢复和队列拒绝后的 PENDING 再调度；验证：并发触发上传回调、恢复扫描和手动重试时只有一个任务进入解析，队列饱和后材料最终可被恢复且不会重复创建 entry/chunk/point。
+- [ ] 5.10 持久化 PARSING/INDEXING 失败阶段、稳定 failure code 与 retryable，并实现仅教师可用的 `POST /api/materials/{id}/processing/retry`；验证：非法 UTF-8 为不可重试且不随重启重复执行，临时依赖失败可重新排队，学生为 403、跨班为 404，索引重建对无知识条目材料给出明确拒绝。
+- [ ] 5.11 将上传文件保存改为受大小限制的流式临时文件复制和原子移动，请求线程不解析正文；验证：Controller 时延不受解析/嵌入 mock 延迟影响，文件保存失败仍执行既有补偿且不遗留数据库记录或临时文件。
 
 ## 6. 三种检索与 API
 
@@ -55,21 +59,25 @@
 ## 7. 有依据的问答
 
 - [x] 7.1 实现 `/api/ask` DTO 和服务端 prompt builder，只接受 1～1000 字 question 与最近 6 条 user/assistant history，丢弃 system、资料、模型参数和 class_id；验证：单元测试确认 prompt 只含服务端规则、本班候选与允许历史。
-- [x] 7.2 复用 hybrid 固定取前 4 条并生成顺序一致的 citations，校验模型输出引用编号；验证：服务测试确认 `[1]`、`[2]` 与 citations 顺序和材料入口一致，不存在编号不会生成伪造 citation。
+- [ ] 7.2 复用 hybrid 固定取前 4 条，并按有效引用在回答中的首次出现顺序重排实际使用的候选；服务端必须同步改写回答正文、`citation.number` 与 citations 数组；验证：覆盖只引用候选 `[4]` 得到 `[1]`、`[4][2][4]` 得到 `[1][2][1]`、越界编号和同一候选重复引用。
 - [x] 7.3 实现无命中短路和 Chat 故障分支；验证：无命中返回 200、固定句和空 citations 且 Chat 调用次数为 0；有候选但 Chat 故障返回 503，不退回自由回答。
 - [x] 7.4 完成问答认证、跨班与提示注入集成测试；验证：未登录为 401，A 班问题与伪造 system/class_id 不能使 prompt 或响应出现 B 班正文，API 响应不含向量和密钥。
 - [x] 7.5 兼容全角/中文括号引用并处理模型完全遗漏编号：最多修订一次，仍失败则丢弃不可核验回答并返回候选依据；验证：`AskServiceTest` 覆盖格式规范化、越界清理、修订成功和安全降级。
+- [ ] 7.6 在构造新一轮 prompt 前清除历史 assistant 文本中的旧 `[n]` 引用标记，但不修改页面可见历史；验证：上一轮 `[1]` 不会被当作本轮候选，用户正文中的普通数字和其他文本不被误删。
 
 ## 8. Vue 检索与索引界面
 
 - [x] 8.1 新增 `/search` 受保护路由、检索 API service 和 AppShell“知识检索”有效导航项，教师/学生共用；验证：Router/Vitest 测试确认未登录重定向、登录角色均可进入、当前导航状态正确。
 - [x] 8.2 实现检索页的问题输入、keyword/vector/hybrid 模式选择、提交、加载和查询参数校验，复用现有按钮、反馈和设计令牌；验证：组件测试覆盖默认 hybrid、三模式请求、重复提交禁用和 400 提示。
-- [x] 8.3 实现命中卡片，展示标题、切片序号、偏移、文本摘录、模式相关分数/名次和材料入口，所有内容按文本渲染；验证：组件测试用含 HTML 的摘录确认没有 `v-html` 执行，材料入口指向当前用户可访问的内容。
-- [x] 8.4 实现空 hits、503 与问答 citations 的不同视觉状态；验证：组件测试确认固定无依据说明、可重试故障和编号引用不会相互混淆，引用顺序与回答编号一致。
-- [x] 8.5 在材料界面显示 PENDING/INDEXING/READY/FAILED，并为教师增加三策略重建表单，学生不显示管理入口；验证：教师组件测试发出带 CSRF 的重建请求，学生组件无按钮，后端学生请求仍由集成测试确认 403。
+- [ ] 8.3 完善命中卡片：以当前结果位置编号并展示标题、摘录和材料入口，分数、偏移及单路名次默认收纳到可折叠“检索详情”，所有内容按文本渲染；验证：含 HTML 的摘录不执行，默认界面不被内部检索字段挤占。
+- [ ] 8.4 实现空 hits、503 与问答 citations 的不同视觉状态，并把请求失败关联到对应消息、提供保留原模式的原地重试；验证：固定无依据说明、依赖故障和编号引用不会混淆，重试不要求重新输入且不清空其他消息。
+- [ ] 8.5 在材料界面展示 QUEUED/PARSING/INDEXING/READY/FAILED、脱敏失败代码与 retryable；教师按状态获得重新处理或三策略重建操作，学生不显示管理入口；验证：教师组件测试携带 Bearer token 发出正确请求，学生组件无按钮，后端学生请求仍返回 403。
 - [ ] 8.6 补充窄屏、键盘和可访问名称样式；验证：执行前端测试并人工在桌面、76px 侧栏和手机宽度检查输入、模式、摘录和材料入口均可操作且无水平遮挡。
 - [x] 8.7 将问答 citations 改为内联依据卡片，直接展示编号、标题、切片位置和安全文本摘录，全文入口保持可选；验证：组件测试确认无需跳转即可看到摘录，HTML 字符串不被执行且窄屏不横向溢出。
-- [x] 8.8 将知识检索页改为类似 GPT 网页端的连续消息流、空状态引导和底部输入器，保留直接检索模式；问答引用与检索结果均按本次数组位置从 1 连续编号，不展示内部切片编号作为引用号；验证：组件测试覆盖多轮历史、两种提交模式、顺序编号、加载/错误与纯文本渲染。
+- [ ] 8.8 将知识检索页完善为占满剩余视口的连续消息流和独立滚动区，输入器在桌面、`100dvh` 与手机软键盘下固定可达；把问答/直接检索及三种检索模式收纳为紧凑控件；验证：组件测试与人工检查覆盖长对话自动滚动、多轮历史、两种提交模式、加载状态和窄屏无横向遮挡。
+- [ ] 8.9 安全分段渲染回答正文中的有效 `[n]` 为可点击按钮，点击后滚动并聚焦同一消息的引用卡；材料入口改为携带 `materialId + chunkId`；验证：不使用 `v-html`，重复编号定位同一卡片，正文与卡片均显示服务端 `citation.number`。
+- [ ] 8.10 新增按 `materialId + chunkId + authenticated classId` 读取引用上下文的 API，并让材料页消费查询参数、自动打开材料和突出目标切片及有限相邻上下文；验证：本班链接可定位，chunk 不属于 material、跨班和不存在均为 404，完整原文件仍可查看/下载。
+- [ ] 8.11 将材料页上传、重新处理、重建、删除拆分为独立忙碌状态；状态轮询仅在页面可见时运行，采用退避、最长等待和手动刷新；验证：孤立 PENDING 不会无限高频轮询，一个操作不会禁用其他材料的无关操作。
 
 ## 9. Compose、配置与文档
 
@@ -80,7 +88,7 @@
 ## 10. 综合验证与规约收尾
 
 - [x] 10.1 运行后端纯单元和网关测试；验证：`mvnw.cmd -Dtest=ChunkingServiceTest,ReciprocalRankFusionTest,GatewayClientTest test` 全部通过且不访问真实模型服务。
-- [x] 10.2 运行后端 MySQL/Qdrant 集成测试；验证：`mvnw.cmd test` 全部通过，覆盖 migration、两班隔离、索引失败、删除清理、三检索模式、503 和问答短路。
-- [x] 10.3 运行前端测试与生产构建；验证：`npm.cmd test -- --run` 和 `npm.cmd run build` 均退出码为 0，既有登录、材料查看/下载测试无回归。
-- [ ] 10.4 执行 Compose 人工验收：原词、同义改写、hybrid 排序、跨班伪造、无依据、Qdrant 停机、教师重建和重启持久化；验证：记录每项 HTTP/页面现象，并确认数据库正文、Qdrant payload 与 point/chunk ID 关系符合 spec。
-- [x] 10.5 对 change 执行严格校验并复核文档一致性；验证：`openspec.cmd validate add-traceable-vector-retrieval --strict` 退出码为 0，proposal、design、spec、README 与实际行为无冲突，且本文件只在对应验证通过后逐项改为 `[x]`。
+- [ ] 10.2 运行后端 MySQL/Qdrant 集成测试；验证：`mvnw.cmd test` 全部通过，覆盖 V3 后续迁移、两班隔离、任务认领/恢复、永久失败、索引失败、引用子集重排、引用上下文、删除清理、三检索模式、503 和问答短路。
+- [ ] 10.3 运行前端测试与生产构建；验证：`npm.cmd test -- --run` 和 `npm.cmd run build` 均退出码为 0，覆盖独立滚动区、紧凑控件、消息级重试、服务端引用编号、深链接与轮询停止，既有登录、材料查看/下载测试无回归。
+- [ ] 10.4 先执行 `docker compose up -d --build backend frontend` 确保运行镜像包含当前源码，再执行 Compose 人工验收：上传 HTTP 201 不等待解析且页面可操作、状态恢复、永久失败、原词、同义改写、hybrid 排序、引用子集重排与跳转、跨班伪造、无依据、Qdrant 停机、教师重试/重建和重启持久化；验证：记录每项 HTTP/页面现象，并确认数据库正文、Qdrant payload 与 point/chunk ID 关系符合 spec。
+- [ ] 10.5 对 change 执行严格校验并复核文档一致性；验证：`openspec.cmd validate add-traceable-vector-retrieval --strict` 退出码为 0，proposal、design、spec、README 与实际行为无冲突，且本文件只在对应验证通过后逐项改为 `[x]`。
