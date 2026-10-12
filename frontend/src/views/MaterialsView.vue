@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import AppIcon from '../components/AppIcon.vue'
 import AppShell from '../components/AppShell.vue'
 import BaseModal from '../components/BaseModal.vue'
@@ -9,7 +10,12 @@ import { authState } from '../services/auth.js'
 const materials = ref([])
 const selectedFile = ref(null)
 const fileInput = ref(null)
-const busy = ref(false)
+const uploadBusy = ref(false)
+const renameBusy = ref(false)
+const deleteBusy = ref(false)
+const rebuildBusy = ref(false)
+const refreshBusy = ref(false)
+const retryBusyIds = ref(new Set())
 const error = ref('')
 const notice = ref('')
 const query = ref('')
@@ -18,6 +24,7 @@ const dragActive = ref(false)
 const viewOpen = ref(false)
 const viewLoading = ref(false)
 const previewContent = ref('')
+const citationContext = ref(null)
 const activeMaterial = ref(null)
 const downloadBusyId = ref(null)
 const renameOpen = ref(false)
@@ -30,6 +37,9 @@ const rebuildOverlap = ref(10)
 const rebuildBreak = ref('PARAGRAPH')
 const rebuildPreprocess = ref(false)
 let statusRefreshTimer = null
+let pollDelay = 1500
+let pollStartedAt = 0
+const route = useRoute()
 
 const isTeacher = computed(() => authState.user?.role === 'teacher')
 const fileCount = computed(() => materials.value.filter((material) => material.hasFile).length)
@@ -42,21 +52,46 @@ const filteredMaterials = computed(() => {
   )
 })
 
-async function loadMaterials() {
-  error.value = ''
+async function loadMaterials({ manual = false } = {}) {
+  if (manual) {
+    refreshBusy.value = true
+    pollDelay = 1500
+    pollStartedAt = Date.now()
+  }
   try {
     materials.value = await apiRequest('/api/materials')
     scheduleStatusRefresh()
   } catch (exception) {
     error.value = exception.message
+  } finally {
+    refreshBusy.value = false
   }
 }
 
 function scheduleStatusRefresh() {
   if (statusRefreshTimer) clearTimeout(statusRefreshTimer)
   const processing = materials.value.some((material) => ['PENDING', 'INDEXING'].includes(material.indexStatus))
-  // 只在存在后台任务时短轮询，完成或失败后自动停止。
-  statusRefreshTimer = processing ? setTimeout(loadMaterials, 1500) : null
+  if (!processing || document.hidden) {
+    statusRefreshTimer = null
+    return
+  }
+  if (!pollStartedAt) pollStartedAt = Date.now()
+  if (Date.now() - pollStartedAt >= 60_000) {
+    statusRefreshTimer = null
+    return
+  }
+  // 轮询逐步退避，避免孤立 PENDING 对后端产生永久高频请求。
+  statusRefreshTimer = setTimeout(() => loadMaterials(), pollDelay)
+  pollDelay = Math.min(Math.round(pollDelay * 1.6), 10_000)
+}
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    if (statusRefreshTimer) clearTimeout(statusRefreshTimer)
+    statusRefreshTimer = null
+  } else {
+    scheduleStatusRefresh()
+  }
 }
 
 function chooseFile(event) {
@@ -70,7 +105,7 @@ function dropFile(event) {
 }
 
 function closeUpload() {
-  if (busy.value) return
+  if (uploadBusy.value) return
   uploadOpen.value = false
   selectedFile.value = null
   if (fileInput.value) fileInput.value.value = ''
@@ -78,7 +113,7 @@ function closeUpload() {
 
 async function upload() {
   if (!selectedFile.value) return
-  busy.value = true
+  uploadBusy.value = true
   error.value = ''
   notice.value = ''
   const data = new FormData()
@@ -90,24 +125,36 @@ async function upload() {
     selectedFile.value = null
     if (fileInput.value) fileInput.value.value = ''
     notice.value = '讲义已上传，系统正在后台解析并建立索引。'
+    pollDelay = 1500
+    pollStartedAt = Date.now()
     await loadMaterials()
   } catch (exception) {
     error.value = exception.message
   } finally {
-    busy.value = false
+    uploadBusy.value = false
   }
 }
 
-async function viewMaterial(material) {
-  if (!material.hasFile) return
+async function viewMaterial(material, chunkId = null) {
+  if (!material.hasFile && !chunkId) return
   activeMaterial.value = material
   previewContent.value = ''
+  citationContext.value = null
   viewOpen.value = true
   viewLoading.value = true
   error.value = ''
   try {
-    // Render the server's plain-text response in <pre>; uploaded Markdown is never injected as HTML.
-    previewContent.value = await apiRequest(`/api/materials/${material.id}/content`, { responseType: 'text' })
+    const requests = []
+    if (chunkId) {
+      requests.push(apiRequest(`/api/materials/${material.id}/chunks/${chunkId}/context`)
+        .then((value) => { citationContext.value = value }))
+    }
+    if (material.hasFile) {
+      // 上传内容始终按纯文本展示，不执行 Markdown 或 HTML。
+      requests.push(apiRequest(`/api/materials/${material.id}/content`, { responseType: 'text' })
+        .then((value) => { previewContent.value = value }))
+    }
+    await Promise.all(requests)
   } catch (exception) {
     viewOpen.value = false
     error.value = exception.message
@@ -147,7 +194,7 @@ function openRename(material) {
 async function rename() {
   const title = renameTitle.value.trim()
   if (!title || title === activeMaterial.value?.title) return
-  busy.value = true
+  renameBusy.value = true
   error.value = ''
   try {
     await apiRequest(`/api/materials/${activeMaterial.value.id}`, {
@@ -160,7 +207,7 @@ async function rename() {
   } catch (exception) {
     error.value = exception.message
   } finally {
-    busy.value = false
+    renameBusy.value = false
   }
 }
 
@@ -177,7 +224,7 @@ function openRebuild(material) {
 
 async function rebuildIndex() {
   if (!activeMaterial.value) return
-  busy.value = true
+  rebuildBusy.value = true
   error.value = ''
   try {
     const body = { strategy: rebuildStrategy.value }
@@ -198,17 +245,46 @@ async function rebuildIndex() {
   } catch (exception) {
     error.value = exception.message
   } finally {
-    busy.value = false
+    rebuildBusy.value = false
   }
 }
 
-function indexLabel(status) {
-  return ({ PENDING: '待解析', INDEXING: '解析/索引中', READY: '可检索', FAILED: '处理失败' })[status] || '待解析'
+function indexLabel(material) {
+  if (material.indexStatus === 'PENDING') return '等待处理'
+  if (material.indexStatus === 'INDEXING') return material.processingStage === 'PARSING' ? '正在解析' : '正在索引'
+  return ({ READY: '可检索', FAILED: '处理失败' })[material.indexStatus] || '等待处理'
+}
+
+function failureLabel(material) {
+  return ({
+    INVALID_TEXT: '文件不是有效的 UTF-8 文本，请删除后重新上传。',
+    DEPENDENCY_UNAVAILABLE: '模型或向量服务暂时不可用，可以重新处理。',
+    PROCESSING_ERROR: '后台处理失败，可以稍后重新处理。',
+  })[material.failureCode] || '后台处理失败。'
+}
+
+async function retryProcessing(material) {
+  if (retryBusyIds.value.has(material.id)) return
+  retryBusyIds.value = new Set(retryBusyIds.value).add(material.id)
+  error.value = ''
+  try {
+    await apiRequest(`/api/materials/${material.id}/processing/retry`, { method: 'POST' })
+    notice.value = '材料已重新排队处理。'
+    pollDelay = 1500
+    pollStartedAt = Date.now()
+    await loadMaterials()
+  } catch (exception) {
+    error.value = exception.message
+  } finally {
+    const pending = new Set(retryBusyIds.value)
+    pending.delete(material.id)
+    retryBusyIds.value = pending
+  }
 }
 
 async function remove() {
   if (!activeMaterial.value) return
-  busy.value = true
+  deleteBusy.value = true
   error.value = ''
   try {
     await apiRequest(`/api/materials/${activeMaterial.value.id}`, { method: 'DELETE' })
@@ -218,7 +294,7 @@ async function remove() {
   } catch (exception) {
     error.value = exception.message
   } finally {
-    busy.value = false
+    deleteBusy.value = false
   }
 }
 
@@ -241,9 +317,26 @@ function fileKind(material) {
   return material.originalFilename?.toLowerCase().endsWith('.md') ? 'Markdown' : '文本文件'
 }
 
-onMounted(loadMaterials)
+async function openRouteContext() {
+  const materialId = Number(route.query.material)
+  const chunkId = Number(route.query.chunk)
+  if (!Number.isInteger(materialId) || !Number.isInteger(chunkId)) return
+  const material = materials.value.find((item) => item.id === materialId)
+  if (!material) {
+    error.value = '引用材料不存在或当前账号无权访问。'
+    return
+  }
+  await viewMaterial(material, chunkId)
+}
+
+onMounted(async () => {
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  await loadMaterials()
+  await openRouteContext()
+})
 onBeforeUnmount(() => {
   if (statusRefreshTimer) clearTimeout(statusRefreshTimer)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>
 
@@ -282,10 +375,13 @@ onBeforeUnmount(() => {
       <section class="content-card materials-card">
         <div class="content-card-header">
           <div><h2>本班讲义</h2><p>共 {{ materials.length }} 份，仅展示当前班级内容</p></div>
-          <label class="search-box">
-            <AppIcon name="search" /><span class="sr-only">搜索讲义</span>
-            <input v-model="query" type="search" placeholder="搜索标题或文件名" />
-          </label>
+          <div class="material-list-tools">
+            <label class="search-box">
+              <AppIcon name="search" /><span class="sr-only">搜索讲义</span>
+              <input v-model="query" type="search" placeholder="搜索标题或文件名" />
+            </label>
+            <button class="icon-button" type="button" :disabled="refreshBusy" aria-label="刷新材料状态" title="刷新材料状态" @click="loadMaterials({ manual: true })"><AppIcon name="refresh" /></button>
+          </div>
         </div>
 
         <div v-if="filteredMaterials.length" class="material-list">
@@ -297,9 +393,10 @@ onBeforeUnmount(() => {
             <div class="material-main">
               <div class="material-title-line">
                 <h3>{{ material.title }}</h3><span class="tag" :class="{ 'tag--muted': !material.hasFile }">{{ fileKind(material) }}</span>
-                <span class="index-badge" :class="`index-badge--${(material.indexStatus || 'PENDING').toLowerCase()}`">{{ indexLabel(material.indexStatus) }}</span>
+                <span class="index-badge" :class="`index-badge--${(material.indexStatus || 'PENDING').toLowerCase()}`">{{ indexLabel(material) }}</span>
               </div>
               <p>{{ material.originalFilename || '系统示例知识条目（无原始文件）' }}</p>
+              <p v-if="material.indexStatus === 'FAILED'" class="material-failure">{{ failureLabel(material) }}</p>
               <div class="material-meta">
                 <span>更新于 {{ formatDate(material.updatedAt || material.createdAt) }}</span>
                 <span v-if="material.hasFile">{{ formatSize(material.fileSizeBytes) }}</span><span v-else>文件操作不可用</span>
@@ -309,7 +406,8 @@ onBeforeUnmount(() => {
               <button class="button button--soft" type="button" :disabled="!material.hasFile" :aria-label="`查看 ${material.title}`" :title="material.hasFile ? '在线查看' : '系统示例条目没有原始文件'" @click="viewMaterial(material)"><AppIcon name="eye" /><span>查看</span></button>
               <button class="button button--soft" type="button" :disabled="!material.hasFile || downloadBusyId === material.id" :aria-label="`下载 ${material.title}`" :title="material.hasFile ? '下载原文件' : '系统示例条目没有原始文件'" @click="downloadMaterial(material)"><AppIcon name="download" /><span>{{ downloadBusyId === material.id ? '下载中' : '下载' }}</span></button>
               <template v-if="isTeacher">
-                <button class="icon-button" type="button" :aria-label="`重建索引 ${material.title}`" title="重建索引" @click="openRebuild(material)"><AppIcon name="refresh" /></button>
+                <button v-if="material.indexStatus === 'FAILED' && material.retryable" class="button button--soft" type="button" :disabled="retryBusyIds.has(material.id)" :aria-label="`重新处理 ${material.title}`" @click="retryProcessing(material)"><AppIcon name="refresh" /><span>{{ retryBusyIds.has(material.id) ? '排队中' : '重新处理' }}</span></button>
+                <button v-if="material.indexStatus === 'READY'" class="icon-button" type="button" :aria-label="`重建索引 ${material.title}`" title="重建索引" @click="openRebuild(material)"><AppIcon name="refresh" /></button>
                 <button class="icon-button" type="button" :aria-label="`重命名 ${material.title}`" title="重命名" @click="openRename(material)"><AppIcon name="edit" /></button>
                 <button class="icon-button icon-button--danger" type="button" :aria-label="`删除 ${material.title}`" title="删除" @click="openDelete(material)"><AppIcon name="trash" /></button>
               </template>
@@ -333,32 +431,42 @@ onBeforeUnmount(() => {
       <span>{{ selectedFile ? formatSize(selectedFile.size) : '支持 UTF-8 编码的 .txt、.md，最大 2 MiB' }}</span>
     </label>
     <template #footer>
-      <button class="button button--secondary" type="button" :disabled="busy" @click="closeUpload">取消</button>
-      <button class="button button--primary" type="button" :disabled="!selectedFile || busy" @click="upload">{{ busy ? '正在上传…' : '上传并后台解析' }}</button>
+      <button class="button button--secondary" type="button" :disabled="uploadBusy" @click="closeUpload">取消</button>
+      <button class="button button--primary" type="button" :disabled="!selectedFile || uploadBusy" @click="upload">{{ uploadBusy ? '正在上传…' : '上传并后台解析' }}</button>
     </template>
   </BaseModal>
 
   <BaseModal v-if="viewOpen" :title="activeMaterial?.title || '查看讲义'" :description="activeMaterial?.originalFilename || ''" wide @close="viewOpen = false">
-    <div v-if="viewLoading" class="preview-loading">正在读取文件…</div><pre v-else class="file-preview">{{ previewContent }}</pre>
+    <div v-if="viewLoading" class="preview-loading">正在读取材料与引用上下文…</div>
+    <template v-else>
+      <section v-if="citationContext" class="citation-context" aria-label="引用上下文">
+        <div class="citation-context-heading"><strong>引用片段</strong><span>处理文本位置 {{ citationContext.startOffset }}–{{ citationContext.endOffset }}</span></div>
+        <article v-for="neighbor in citationContext.neighbors" :key="neighbor.chunkId" :class="{ 'citation-context-target': neighbor.target }">
+          <span>{{ neighbor.target ? '当前引用' : '相邻片段' }}</span><p>{{ neighbor.excerpt }}</p>
+        </article>
+      </section>
+      <pre v-if="activeMaterial?.hasFile" class="file-preview">{{ previewContent }}</pre>
+      <p v-else class="preview-no-file">该知识条目没有原始文件，可在上方核对引用上下文。</p>
+    </template>
     <template #footer>
       <button class="button button--secondary" type="button" @click="viewOpen = false">关闭</button>
-      <button class="button button--primary" type="button" @click="downloadMaterial(activeMaterial)"><AppIcon name="download" />下载原文件</button>
+      <button v-if="activeMaterial?.hasFile" class="button button--primary" type="button" @click="downloadMaterial(activeMaterial)"><AppIcon name="download" />下载原文件</button>
     </template>
   </BaseModal>
 
   <BaseModal v-if="renameOpen" title="重命名材料" description="只修改展示标题，不改变原文件名。" @close="renameOpen = false">
     <form class="modal-form" @submit.prevent="rename"><label>材料标题<input v-model="renameTitle" maxlength="255" required autofocus /></label></form>
     <template #footer>
-      <button class="button button--secondary" type="button" :disabled="busy" @click="renameOpen = false">取消</button>
-      <button class="button button--primary" type="button" :disabled="busy || !renameTitle.trim()" @click="rename">保存修改</button>
+      <button class="button button--secondary" type="button" :disabled="renameBusy" @click="renameOpen = false">取消</button>
+      <button class="button button--primary" type="button" :disabled="renameBusy || !renameTitle.trim()" @click="rename">{{ renameBusy ? '保存中…' : '保存修改' }}</button>
     </template>
   </BaseModal>
 
   <BaseModal v-if="deleteOpen" title="删除这份材料？" @close="deleteOpen = false">
     <div class="delete-warning"><span><AppIcon name="trash" /></span><p>“{{ activeMaterial?.title }}”及其关联知识条目和原文件将一并删除，此操作不可撤销。</p></div>
     <template #footer>
-      <button class="button button--secondary" type="button" :disabled="busy" @click="deleteOpen = false">取消</button>
-      <button class="button button--danger" type="button" :disabled="busy" @click="remove">{{ busy ? '删除中…' : '确认删除' }}</button>
+      <button class="button button--secondary" type="button" :disabled="deleteBusy" @click="deleteOpen = false">取消</button>
+      <button class="button button--danger" type="button" :disabled="deleteBusy" @click="remove">{{ deleteBusy ? '删除中…' : '确认删除' }}</button>
     </template>
   </BaseModal>
 
@@ -381,8 +489,8 @@ onBeforeUnmount(() => {
       </template>
     </form>
     <template #footer>
-      <button class="button button--secondary" type="button" :disabled="busy" @click="rebuildOpen = false">取消</button>
-      <button class="button button--primary" type="button" :disabled="busy" @click="rebuildIndex">{{ busy ? '重建中…' : '确认重建' }}</button>
+      <button class="button button--secondary" type="button" :disabled="rebuildBusy" @click="rebuildOpen = false">取消</button>
+      <button class="button button--primary" type="button" :disabled="rebuildBusy" @click="rebuildIndex">{{ rebuildBusy ? '重建中…' : '确认重建' }}</button>
     </template>
   </BaseModal>
 </template>

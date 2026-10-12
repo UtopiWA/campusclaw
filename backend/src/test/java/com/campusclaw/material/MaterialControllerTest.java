@@ -12,6 +12,7 @@ import com.campusclaw.knowledge.MaterialIngestionService;
 import com.campusclaw.knowledge.VectorCleanupService;
 import com.campusclaw.persistence.IndexStatus;
 import com.campusclaw.persistence.IndexStrategy;
+import com.campusclaw.persistence.ProcessingStage;
 import com.campusclaw.persistence.UserAccount;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -32,7 +33,8 @@ class MaterialControllerTest {
         when(teacher.getClassId()).thenReturn(2L);
         when(currentUsers.requireTeacher()).thenReturn(teacher);
         MaterialView pending = new MaterialView(7L, "讲义", "lesson.md", 12L, true, 3L,
-                IndexStatus.PENDING, IndexStrategy.AUTO, null, Instant.now(), Instant.now());
+                IndexStatus.PENDING, ProcessingStage.QUEUED, null, false,
+                IndexStrategy.AUTO, null, Instant.now(), Instant.now());
         MockMultipartFile file = new MockMultipartFile(
                 "file", "lesson.md", "text/markdown", "正文".getBytes(StandardCharsets.UTF_8));
         when(materials.upload(file, teacher)).thenReturn(pending);

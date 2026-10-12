@@ -1,10 +1,10 @@
 package com.campusclaw.knowledge;
 
+import com.campusclaw.common.BadRequestException;
+import com.campusclaw.material.MaterialView;
 import com.campusclaw.material.MaterialService;
-import com.campusclaw.persistence.IndexStatus;
-import com.campusclaw.persistence.IndexStrategy;
-import com.campusclaw.persistence.Material;
-import com.campusclaw.persistence.MaterialRepository;
+import com.campusclaw.persistence.ProcessingFailureCode;
+import com.campusclaw.persistence.ProcessingStage;
 import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,14 +19,12 @@ public class MaterialIngestionService {
     private final MaterialService materials;
     private final IndexStateService state;
     private final IndexingService indexing;
-    private final MaterialRepository materialRepository;
 
     public MaterialIngestionService(MaterialService materials, IndexStateService state,
-                                    IndexingService indexing, MaterialRepository materialRepository) {
+                                    IndexingService indexing) {
         this.materials = materials;
         this.state = state;
         this.indexing = indexing;
-        this.materialRepository = materialRepository;
     }
 
     @Async("materialIngestionExecutor")
@@ -35,22 +33,26 @@ public class MaterialIngestionService {
         return CompletableFuture.completedFuture(null);
     }
 
-    /** 同步核心便于启动补偿和单元测试复用，异常只转化为材料失败状态。 */
+    /** 同步核心先原子认领材料；重复调度未认领成功时直接安全结束。 */
     public void ingestNow(Long materialId, Long classId) {
+        if (!state.claimPending(materialId, classId)) {
+            return;
+        }
         try {
-            state.begin(materialId, classId, IndexStrategy.AUTO);
             materials.parseStoredMaterial(materialId, classId);
             indexing.indexAfterCommit(materialId, classId, ChunkingOptions.auto());
+        } catch (BadRequestException exception) {
+            state.markMaterialFailed(materialId, classId, ProcessingStage.PARSING,
+                    ProcessingFailureCode.INVALID_TEXT, false, "Invalid UTF-8 text material");
+            log.warn("Material {} contains invalid text and will not be retried automatically", materialId);
         } catch (RuntimeException exception) {
-            state.markMaterialFailed(materialId, classId, "Material parsing or indexing failed");
-            log.warn("Material {} background ingestion failed", materialId);
+            state.markMaterialFailed(materialId, classId, ProcessingStage.PARSING,
+                    ProcessingFailureCode.PROCESSING_ERROR, true, "Material parsing failed");
+            log.warn("Material {} background parsing failed", materialId);
         }
     }
 
-    /** 进程中断不会丢失任务，非 READY 材料会在启动阶段按数据库状态重新处理。 */
-    public void backfill() {
-        for (Material material : materialRepository.findAllByIndexStatusNotOrderById(IndexStatus.READY)) {
-            ingestNow(material.getId(), material.getClassId());
-        }
+    public MaterialView prepareRetry(Long materialId, Long classId) {
+        return state.queueForRetry(materialId, classId);
     }
 }

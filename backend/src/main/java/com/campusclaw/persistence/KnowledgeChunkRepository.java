@@ -2,6 +2,7 @@ package com.campusclaw.persistence;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -9,6 +10,9 @@ import org.springframework.data.repository.query.Param;
 
 public interface KnowledgeChunkRepository extends JpaRepository<KnowledgeChunk, Long> {
     List<KnowledgeChunk> findAllByMaterialIdAndClassIdOrderByChunkIndex(Long materialId, Long classId);
+
+    Optional<KnowledgeChunk> findByIdAndMaterialIdAndClassIdAndIndexStatus(
+            Long id, Long materialId, Long classId, IndexStatus status);
 
     List<KnowledgeChunk> findAllByIdInAndClassIdAndIndexStatus(Collection<Long> ids, Long classId, IndexStatus status);
 

@@ -2,12 +2,10 @@ package com.campusclaw.knowledge;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,10 +13,8 @@ import com.campusclaw.common.DependencyUnavailableException;
 import com.campusclaw.gateway.EmbeddingGateway;
 import com.campusclaw.gateway.VectorStoreGateway;
 import com.campusclaw.gateway.VectorStoreGateway.VectorPoint;
-import com.campusclaw.material.MaterialView;
 import com.campusclaw.persistence.KnowledgeChunk;
 import com.campusclaw.persistence.Material;
-import com.campusclaw.persistence.MaterialRepository;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,8 +27,7 @@ class IndexingServiceTest {
     private final ChunkingService chunking = mock(ChunkingService.class);
     private final EmbeddingGateway embeddings = mock(EmbeddingGateway.class);
     private final VectorStoreGateway vectors = mock(VectorStoreGateway.class);
-    private final MaterialRepository materials = mock(MaterialRepository.class);
-    private final IndexingService service = new IndexingService(state, chunking, embeddings, vectors, materials);
+    private final IndexingService service = new IndexingService(state, chunking, embeddings, vectors);
     private final Material material = mock(Material.class);
     private final KnowledgeChunk pending = mock(KnowledgeChunk.class);
 
@@ -85,21 +80,7 @@ class IndexingServiceTest {
 
         verify(vectors).deletePoints(List.of(90L));
         verify(vectors).deletePoints(List.of(101L));
-        verify(state).markFailed(7L, 2L, List.of(101L));
+        verify(state).markFailed(eq(7L), eq(2L), eq(List.of(101L)), any(DependencyUnavailableException.class));
         verify(vectors, never()).upsert(any());
-    }
-
-    @Test
-    void backfillDoesNotReindexMaterialsOnceRepositoryReportsThemReady() {
-        when(materials.findAllByIndexStatusNotOrderById(com.campusclaw.persistence.IndexStatus.READY))
-                .thenReturn(List.of(material), List.of());
-        IndexingService backfill = spy(new IndexingService(state, chunking, embeddings, vectors, materials));
-        doReturn(mock(MaterialView.class)).when(backfill)
-                .indexAfterCommit(7L, 2L, ChunkingOptions.auto());
-
-        backfill.backfill();
-        backfill.backfill();
-
-        verify(backfill, times(1)).indexAfterCommit(7L, 2L, ChunkingOptions.auto());
     }
 }

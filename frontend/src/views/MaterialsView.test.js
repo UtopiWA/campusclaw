@@ -1,14 +1,18 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { apiRequest, authState } = vi.hoisted(() => ({
+const { apiRequest, authState, routeState } = vi.hoisted(() => ({
   apiRequest: vi.fn(),
   authState: { user: null, loaded: true },
+  routeState: { query: {} },
 }))
 
 vi.mock('../services/api.js', () => ({ apiRequest }))
 vi.mock('../services/auth.js', () => ({ authState, logout: vi.fn() }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ replace: vi.fn() }) }))
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ replace: vi.fn() }),
+  useRoute: () => routeState,
+}))
 
 import MaterialsView from './MaterialsView.vue'
 
@@ -16,6 +20,7 @@ describe('MaterialsView', () => {
   beforeEach(() => {
     apiRequest.mockReset()
     apiRequest.mockResolvedValue([])
+    routeState.query = {}
   })
 
   it('shows management controls to a teacher', async () => {
@@ -83,5 +88,49 @@ describe('MaterialsView', () => {
 
     expect(apiRequest).toHaveBeenLastCalledWith('/api/materials/9/content', { responseType: 'text' })
     expect(wrapper.find('pre.file-preview').text()).toBe('<script>不会执行</script>')
+  })
+
+  it('opens a class-scoped citation context from route parameters', async () => {
+    authState.user = { username: 'student-a1', role: 'student', className: '班级 A' }
+    routeState.query = { material: '9', chunk: '22' }
+    apiRequest
+      .mockResolvedValueOnce([{
+        id: 9, title: '阅读方法', originalFilename: 'reading.txt', hasFile: true,
+        indexStatus: 'READY', fileSizeBytes: 12,
+        createdAt: '2026-09-26T01:00:00Z', updatedAt: '2026-09-26T01:00:00Z',
+      }])
+      .mockResolvedValueOnce({
+        materialId: 9, chunkId: 22, startOffset: 3, endOffset: 10,
+        neighbors: [{ chunkId: 22, chunkIndex: 0, excerpt: '被引用的正文', target: true }],
+      })
+      .mockResolvedValueOnce('完整原文件')
+
+    const wrapper = mount(MaterialsView, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
+    await flushPromises()
+
+    expect(apiRequest).toHaveBeenCalledWith('/api/materials/9/chunks/22/context')
+    expect(apiRequest).toHaveBeenCalledWith('/api/materials/9/content', { responseType: 'text' })
+    expect(wrapper.find('.citation-context-target').text()).toContain('被引用的正文')
+    expect(wrapper.find('pre.file-preview').text()).toBe('完整原文件')
+  })
+
+  it('lets a teacher retry a retryable failed material', async () => {
+    authState.user = { username: 'teacher-a', role: 'teacher', className: '班级 A' }
+    apiRequest
+      .mockResolvedValueOnce([{
+        id: 10, title: '失败讲义', originalFilename: 'failed.md', hasFile: true,
+        indexStatus: 'FAILED', processingStage: 'INDEXING', failureCode: 'DEPENDENCY_UNAVAILABLE',
+        retryable: true, createdAt: '2026-09-26T01:00:00Z', updatedAt: '2026-09-26T01:00:00Z',
+      }])
+      .mockResolvedValueOnce({ indexStatus: 'PENDING' })
+      .mockResolvedValueOnce([])
+
+    const wrapper = mount(MaterialsView, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
+    await flushPromises()
+    await wrapper.find('[aria-label="重新处理 失败讲义"]').trigger('click')
+    await flushPromises()
+
+    expect(apiRequest).toHaveBeenCalledWith('/api/materials/10/processing/retry', { method: 'POST' })
+    expect(wrapper.text()).toContain('材料已重新排队处理')
   })
 })

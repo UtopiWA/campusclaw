@@ -16,10 +16,6 @@ import SearchView from './SearchView.vue'
 
 const global = { stubs: { RouterLink: { props: ['to'], template: '<a :data-to="to"><slot /></a>' } } }
 
-function buttonWithText(wrapper, text) {
-  return wrapper.findAll('button').find((button) => button.text().includes(text))
-}
-
 describe('SearchView', () => {
   beforeEach(() => {
     searchKnowledge.mockReset()
@@ -37,7 +33,7 @@ describe('SearchView', () => {
     })
     const wrapper = mount(SearchView, { global })
     expect(wrapper.text()).toContain('今天想从讲义中了解什么')
-    await buttonWithText(wrapper, '直接检索').trigger('click')
+    await wrapper.find('select[aria-label="交互方式"]').setValue('search')
     await wrapper.find('textarea').setValue('课堂提问')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -49,11 +45,12 @@ describe('SearchView', () => {
     expect(wrapper.text()).not.toContain('Chunk #803')
     expect(wrapper.find('.chat-hit-main p').text()).toContain('<img')
     expect(wrapper.find('.chat-hit-main img').exists()).toBe(false)
-    expect(wrapper.find('.chat-hit a').attributes('data-to')).toBe('/materials?material=1')
+    expect(wrapper.find('.chat-hit a').attributes('data-to')).toBe('/materials?material=1&chunk=803')
+    expect(wrapper.find('.chat-hit-details').attributes('open')).toBeUndefined()
 
-    for (const mode of ['关键词', '语义']) {
-      await buttonWithText(wrapper, mode).trigger('click')
-      await wrapper.find('textarea').setValue(`${mode}查询`)
+    for (const [value, label] of [['keyword', '关键词'], ['vector', '语义']]) {
+      await wrapper.find('select[aria-label="检索模式"]').setValue(value)
+      await wrapper.find('textarea').setValue(`${label}查询`)
       await wrapper.find('form').trigger('submit')
       await flushPromises()
     }
@@ -64,11 +61,11 @@ describe('SearchView', () => {
   it('keeps multiple grounded turns and displays citation order instead of chunk numbers', async () => {
     askKnowledge
       .mockResolvedValueOnce({ answer: '第一轮结论 [1]', citations: [{
-        number: 17, materialId: 1, materialTitle: '讲义甲', chunkId: 902, chunkIndex: 51,
+        number: 1, materialId: 1, materialTitle: '讲义甲', chunkId: 902, chunkIndex: 51,
         excerpt: '<strong>可直接核对的依据片段</strong>',
       }] })
       .mockResolvedValueOnce({ answer: '第二轮结论 [1]', citations: [{
-        number: 8, materialId: 2, materialTitle: '讲义乙', chunkId: 999, chunkIndex: 76, excerpt: '第二条依据',
+        number: 1, materialId: 2, materialTitle: '讲义乙', chunkId: 999, chunkIndex: 76, excerpt: '第二条依据',
       }] })
     const wrapper = mount(SearchView, { global })
 
@@ -77,10 +74,11 @@ describe('SearchView', () => {
     await flushPromises()
     expect(askKnowledge).toHaveBeenNthCalledWith(1, '第一个问题', [])
     expect(wrapper.find('.chat-citation-heading').text()).toContain('[1] 讲义甲')
-    expect(wrapper.text()).not.toContain('[17]')
     expect(wrapper.text()).not.toContain('切片 52')
     expect(wrapper.find('.chat-citation p').text()).toContain('<strong>可直接核对的依据片段</strong>')
     expect(wrapper.find('.chat-citation p strong').exists()).toBe(false)
+    expect(wrapper.find('.chat-inline-citation').attributes('aria-label')).toBe('查看引用 1')
+    expect(wrapper.find('.chat-citation-heading a').attributes('data-to')).toBe('/materials?material=1&chunk=902')
 
     await wrapper.find('textarea').setValue('继续追问')
     await wrapper.find('form').trigger('submit')
@@ -116,5 +114,15 @@ describe('SearchView', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('检索依赖暂时不可用，请稍后重试')
     expect(wrapper.text()).not.toContain('内部依赖地址')
+    expect(wrapper.find('.chat-message-error button').text()).toBe('重试')
+
+    askKnowledge.mockResolvedValueOnce({ answer: '重试成功', citations: [] })
+    await wrapper.find('.chat-message-error button').trigger('click')
+    await flushPromises()
+    expect(askKnowledge).toHaveBeenLastCalledWith('再次提问', [
+      { role: 'user', content: '并发提交' },
+      { role: 'assistant', content: '完成' },
+    ])
+    expect(wrapper.text()).toContain('重试成功')
   })
 })

@@ -1,13 +1,11 @@
 package com.campusclaw.knowledge;
 
+import com.campusclaw.common.BadRequestException;
 import com.campusclaw.gateway.EmbeddingGateway;
 import com.campusclaw.gateway.VectorStoreGateway;
 import com.campusclaw.gateway.VectorStoreGateway.VectorPoint;
 import com.campusclaw.material.MaterialView;
-import com.campusclaw.persistence.IndexStatus;
 import com.campusclaw.persistence.KnowledgeChunk;
-import com.campusclaw.persistence.Material;
-import com.campusclaw.persistence.MaterialRepository;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
@@ -23,15 +21,13 @@ public class IndexingService {
     private final ChunkingService chunking;
     private final EmbeddingGateway embeddings;
     private final VectorStoreGateway vectors;
-    private final MaterialRepository materials;
 
     public IndexingService(IndexStateService state, ChunkingService chunking, EmbeddingGateway embeddings,
-                           VectorStoreGateway vectors, MaterialRepository materials) {
+                           VectorStoreGateway vectors) {
         this.state = state;
         this.chunking = chunking;
         this.embeddings = embeddings;
         this.vectors = vectors;
-        this.materials = materials;
     }
 
     public MaterialView indexAfterCommit(Long materialId, Long classId, ChunkingOptions options) {
@@ -46,7 +42,11 @@ public class IndexingService {
     public MaterialView rebuild(Long materialId, Long classId, ChunkingOptions requested) {
         ChunkingOptions options = requested.validated();
         state.require(materialId, classId);
-        List<ChunkDraft> drafts = chunking.chunkEntries(state.sourceEntries(materialId, classId), options);
+        List<ChunkingService.SourceEntry> sourceEntries = state.sourceEntries(materialId, classId);
+        if (sourceEntries.isEmpty()) {
+            throw new BadRequestException("Material has not been parsed; retry processing first");
+        }
+        List<ChunkDraft> drafts = chunking.chunkEntries(sourceEntries, options);
         List<Long> oldPointIds = state.existingPointIds(materialId, classId);
         state.begin(materialId, classId, options.strategy());
         List<Long> newPointIds = new ArrayList<>();
@@ -70,14 +70,8 @@ public class IndexingService {
             } catch (RuntimeException cleanupFailure) {
                 exception.addSuppressed(cleanupFailure);
             }
-            state.markFailed(materialId, classId, newPointIds);
+            state.markFailed(materialId, classId, newPointIds, exception);
             throw exception;
-        }
-    }
-
-    public void backfill() {
-        for (Material material : materials.findAllByIndexStatusNotOrderById(IndexStatus.READY)) {
-            indexAfterCommit(material.getId(), material.getClassId(), ChunkingOptions.auto());
         }
     }
 }

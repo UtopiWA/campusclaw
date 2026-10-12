@@ -7,22 +7,19 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
-/** 在 demo seed 之后校验 collection，并幂等补齐历史材料索引。 */
+/** 在 demo seed 之后校验 collection；材料恢复由应用就绪后的有界调度器负责。 */
 @Component
 @Order(100)
 @ConditionalOnProperty(prefix = "app.retrieval", name = "initialize-vector-store", havingValue = "true")
 public class RetrievalStartupRunner implements ApplicationRunner {
     private final VectorStoreGateway vectors;
-    private final MaterialIngestionService ingestion;
 
-    public RetrievalStartupRunner(VectorStoreGateway vectors, MaterialIngestionService ingestion) {
+    public RetrievalStartupRunner(VectorStoreGateway vectors) {
         this.vectors = vectors;
-        this.ingestion = ingestion;
     }
 
     @Override
     public void run(ApplicationArguments args) {
         vectors.ensureCollection();
-        ingestion.backfill();
     }
 }

@@ -6,6 +6,8 @@ import com.campusclaw.common.StorageException;
 import com.campusclaw.config.AppProperties;
 import com.campusclaw.knowledge.TextParser;
 import com.campusclaw.persistence.KnowledgeEntry;
+import com.campusclaw.persistence.IndexStatus;
+import com.campusclaw.persistence.KnowledgeChunk;
 import com.campusclaw.persistence.KnowledgeEntryRepository;
 import com.campusclaw.persistence.Material;
 import com.campusclaw.persistence.MaterialRepository;
@@ -76,6 +78,35 @@ public class MaterialService {
     }
 
     @Transactional(readOnly = true)
+    public MaterialChunkContext readChunkContext(Long materialId, Long chunkId, UserAccount user) {
+        Material material = requireMaterial(materialId, user.getClassId());
+        KnowledgeChunk target = retrievalChunks.findByIdAndMaterialIdAndClassIdAndIndexStatus(
+                chunkId, materialId, user.getClassId(), IndexStatus.READY).orElseThrow(NotFoundException::new);
+        List<KnowledgeChunk> all = retrievalChunks.findAllByMaterialIdAndClassIdOrderByChunkIndex(
+                materialId, user.getClassId()).stream()
+                .filter(chunk -> chunk.getIndexStatus() == IndexStatus.READY)
+                .toList();
+        int targetPosition = -1;
+        for (int index = 0; index < all.size(); index++) {
+            if (all.get(index).getId().equals(target.getId())) {
+                targetPosition = index;
+                break;
+            }
+        }
+        if (targetPosition < 0) {
+            throw new NotFoundException();
+        }
+        int from = Math.max(0, targetPosition - 1);
+        int to = Math.min(all.size(), targetPosition + 2);
+        List<MaterialChunkContext.Neighbor> neighbors = all.subList(from, to).stream()
+                .map(chunk -> new MaterialChunkContext.Neighbor(chunk.getId(), chunk.getChunkIndex(),
+                        chunk.getChunkText(), chunk.getId().equals(target.getId())))
+                .toList();
+        return new MaterialChunkContext(materialId, material.getTitle(), target.getId(), target.getChunkIndex(),
+                target.getStartOffset(), target.getEndOffset(), target.getChunkText(), neighbors);
+    }
+
+    @Transactional(readOnly = true)
     public MaterialFile readFile(Long id, UserAccount user) {
         Material material = requireMaterial(id, user.getClassId());
         // Resolve the persisted relative path inside the current class directory before touching the filesystem.
@@ -103,7 +134,7 @@ public class MaterialService {
 
     @Transactional
     public MaterialView upload(MultipartFile file, UserAccount teacher) {
-        UploadContent content = validateAndRead(file);
+        UploadContent content = validateUpload(file);
         Path temp = null;
         Path destination = null;
         try {
@@ -113,7 +144,13 @@ public class MaterialService {
             Files.createDirectories(tempDir);
             Files.createDirectories(classDir);
             temp = Files.createTempFile(tempDir, "upload-", ".tmp");
-            Files.write(temp, content.bytes());
+            long copied;
+            try (var input = file.getInputStream()) {
+                copied = Files.copy(input, temp, StandardCopyOption.REPLACE_EXISTING);
+            }
+            if (copied < 1 || copied > maxUploadBytes) {
+                throw new BadRequestException("File must be non-empty and within the configured size limit");
+            }
 
             String storedName = UUID.randomUUID() + "." + content.extension();
             destination = classDir.resolve(storedName).normalize();
@@ -125,7 +162,7 @@ public class MaterialService {
             // Publish the file atomically, then register rollback cleanup for the remaining transaction lifetime.
             moveAtomically(temp, destination);
             material.setStoredPath(toStoredPath(destination));
-            material.setFileSizeBytes((long) content.bytes().length);
+            material.setFileSizeBytes(copied);
             materials.saveAndFlush(material);
             registerUploadCleanup(temp, destination);
             return MaterialView.from(material);
@@ -143,7 +180,7 @@ public class MaterialService {
     @Transactional
     public void parseStoredMaterial(Long materialId, Long classId) {
         Material material = requireMaterial(materialId, classId);
-        // 重试和启动补偿可重复调用；已有正文时不得再次插入相同知识条目。
+        // 手动重试和后台恢复可重复调用；已有正文时不得再次插入相同知识条目。
         if (!knowledgeEntries.findAllByMaterialIdAndClassIdOrderByChunkIndex(materialId, classId).isEmpty()) {
             return;
         }
@@ -197,7 +234,7 @@ public class MaterialService {
         return materials.findByIdAndClassId(id, classId).orElseThrow(NotFoundException::new);
     }
 
-    private UploadContent validateAndRead(MultipartFile file) {
+    private UploadContent validateUpload(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new BadRequestException("File must not be empty");
         }
@@ -213,19 +250,11 @@ public class MaterialService {
         if (!SUPPORTED_EXTENSIONS.contains(extension)) {
             throw new BadRequestException("Only .txt and .md files are supported");
         }
-        try {
-            byte[] bytes = file.getBytes();
-            if (bytes.length == 0) {
-                throw new BadRequestException("File must not be empty");
-            }
-            String title = original.substring(0, dot).trim();
-            if (title.isBlank()) {
-                title = "未命名材料";
-            }
-            return new UploadContent(original, title, extension, bytes);
-        } catch (IOException exception) {
-            throw new BadRequestException("Could not read uploaded file", exception);
+        String title = original.substring(0, dot).trim();
+        if (title.isBlank()) {
+            title = "未命名材料";
         }
+        return new UploadContent(original, title, extension);
     }
 
     private String safeOriginalFilename(String value) {
@@ -330,7 +359,7 @@ public class MaterialService {
         }
     }
 
-    private record UploadContent(String originalFilename, String title, String extension, byte[] bytes) {
+    private record UploadContent(String originalFilename, String title, String extension) {
     }
 
     public record MaterialFile(String filename, byte[] content) {

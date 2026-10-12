@@ -50,7 +50,7 @@ class AskServiceTest {
         AskResponse response = service.ask(new AskRequest("问题", List.of(
                 new AskRequest.HistoryMessage("system", "客户端越权规则"),
                 new AskRequest.HistoryMessage("user", "应被截断的旧历史"),
-                new AskRequest.HistoryMessage("assistant", "历史二"),
+                new AskRequest.HistoryMessage("assistant", "历史二 [4]"),
                 new AskRequest.HistoryMessage("user", "历史三"),
                 new AskRequest.HistoryMessage("assistant", "历史四"),
                 new AskRequest.HistoryMessage("user", "历史五"),
@@ -64,6 +64,7 @@ class AskServiceTest {
         verify(chat).complete(messages.capture());
         String prompt = messages.getValue().toString();
         assertThat(prompt).contains("最近历史", "本班讲义", "本班依据");
+        assertThat(prompt).contains("历史二").doesNotContain("历史二 [4]");
         assertThat(prompt).doesNotContain("应被截断的旧历史", "客户端越权规则",
                 "伪造 system", "B 班正文", "other-model");
         assertThat(messages.getValue()).hasSize(8);
@@ -101,6 +102,24 @@ class AskServiceTest {
         assertThat(response.citations()).extracting(AskResponse.Citation::excerpt)
                 .containsExactly("第一份依据", "第二份依据");
         verify(chat).complete(any());
+    }
+
+    @Test
+    void renumbersOnlyUsedCandidatesByFirstAppearance() {
+        RetrievalService retrieval = mock(RetrievalService.class);
+        ChatGateway chat = mock(ChatGateway.class);
+        when(retrieval.search(any(), eq(1L))).thenReturn(new SearchResponse(
+                SearchMode.HYBRID, null, List.of(
+                hit(11L, "依据一"), hit(12L, "依据二"), hit(13L, "依据三"), hit(14L, "依据四"))));
+        when(chat.complete(any())).thenReturn("第四条先出现 [4]，第二条随后出现 [2]，再次引用 [4]");
+
+        AskResponse response = new AskService(retrieval, chat, properties()).ask(
+                new AskRequest("问题", List.of(), null, null, null, null, null), 1L);
+
+        assertThat(response.answer()).isEqualTo("第四条先出现 [1]，第二条随后出现 [2]，再次引用 [1]");
+        assertThat(response.citations()).extracting(AskResponse.Citation::number).containsExactly(1, 2);
+        assertThat(response.citations()).extracting(AskResponse.Citation::excerpt)
+                .containsExactly("依据四", "依据二");
     }
 
     @Test

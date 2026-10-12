@@ -61,9 +61,11 @@ Compose 仅将 MySQL 暴露到宿主机回环地址，不会监听局域网网�
 | `student-a1` | 学生 | 班级 A |
 | `student-b1` | 学生 | 班级 B |
 
-教师可以上传、查看、下载、重命名、删除和按三种策略重建本班材料索引；学生可以查看、下载和检索，但不能执行管理操作。任何客户端提交的 `class_id` 都会被忽略，数据范围只取 Bearer JWT 对应用户在数据库中的最新班级；跨班按 ID 管理统一返回 404，跨班检索返回空结果。
+教师可以上传、查看、下载、重命名、删除和按三种策略重建本班材料索引；临时处理失败时还可以重新提交。学生可以查看、下载和检索，但不能执行管理操作。任何客户端提交的 `class_id` 都会被忽略，数据范围只取 Bearer JWT 对应用户在数据库中的最新班级；跨班按 ID 管理统一返回 404，跨班检索返回空结果。
 
 系统种子材料只包含知识条目，没有对应的物理原文件，页面会将查看和下载按钮标记为不可用。教师新上传的 `.txt`/`.md` 文件可正常查看和下载。
+
+上传请求只负责流式保存原文件和创建 `PENDING/QUEUED` 材料，随后立即返回；解析、切分、嵌入和写入 Qdrant 在有界后台执行器中完成。页面以退避轮询展示 `QUEUED`、`PARSING`、`INDEXING`、`READY` 或 `FAILED`。应用就绪后的恢复调度会重新提交遗留 `PENDING` 和陈旧 `INDEXING`，不会自动重跑确定为永久失败的材料。
 
 ## 本地开发
 
@@ -112,16 +114,18 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 | `POST /api/materials/upload` | 教师上传 `.txt`/`.md` 材料 |
 | `GET /api/materials/{id}/content` | 同班师生以 UTF-8 纯文本在线查看原文件 |
 | `GET /api/materials/{id}/download` | 同班师生下载原文件 |
+| `GET /api/materials/{id}/chunks/{chunkId}/context` | 同班师生读取引用切片及有限相邻上下文 |
 | `PATCH /api/materials/{id}` | 教师修改本班材料标题 |
 | `DELETE /api/materials/{id}` | 教师删除本班材料及知识条目 |
 | `POST /api/materials/{id}/index/rebuild` | 教师以 AUTO/CUSTOM/HIERARCHY 重建索引 |
+| `POST /api/materials/{id}/processing/retry` | 教师重新提交可重试的失败材料 |
 | `POST /api/retrieval/search` | keyword/vector/hybrid 可追溯检索，默认 hybrid |
 | `POST /api/ask` | 固定 hybrid 前 4 条依据的问答与引用 |
 | `GET /health` | 无需登录的应用与数据库健康检查 |
 
 匿名 API 请求返回 401，角色不足返回 403，跨班资源返回不泄露存在性的 404。
 
-检索的 `query` 为 1～1000 个 Unicode 字符，`limit` 为 1～20。keyword 仅依赖 MySQL；vector 和 hybrid 在嵌入或 Qdrant 不可用时返回脱敏 503。无命中始终返回 200、空 `hits` 与“资料中未找到相关内容”；问答在此分支不会调用 Chat。Qdrant payload 不保存正文，point ID、payload `chunk_id` 与 MySQL chunk ID 保持一致。
+检索的 `query` 为 1～1000 个 Unicode 字符，`limit` 为 1～20。keyword 仅依赖 MySQL；vector 和 hybrid 在嵌入或 Qdrant 不可用时返回脱敏 503。无命中始终返回 200、空 `hits` 与“资料中未找到相关内容”；问答在此分支不会调用 Chat。回答只保留实际引用的候选，并按正文首次出现顺序从 1 连续编号；前端可直接展开引用摘录，也可跳转到材料页突出目标切片及相邻上下文。Qdrant payload 不保存正文，point ID、payload `chunk_id` 与 MySQL chunk ID 保持一致。
 
 ## 前端界面约定
 
@@ -133,6 +137,7 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 - 手机端：隐藏侧栏，保留移动品牌顶栏，内容和操作纵向排列。
 - 尚未实现的菜单明确显示“待建设”，不作为空链接。
 - `.md` 在线查看只展示源文本，不执行用户文件中的 HTML。
+- 知识检索页使用占满剩余视口的独立消息流与底部紧凑输入器；失败只附着在对应消息，可保留原模式原地重试。
 
 ## 验证
 

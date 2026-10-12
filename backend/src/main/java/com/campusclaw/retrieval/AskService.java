@@ -5,9 +5,9 @@ import com.campusclaw.config.AppProperties;
 import com.campusclaw.gateway.ChatGateway;
 import com.campusclaw.gateway.ChatGateway.ChatMessage;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
@@ -47,9 +47,9 @@ public class AskService {
         }
         messages.add(new ChatMessage("user", buildGroundedPrompt(question, evidence.hits())));
         String answer = normalizeCitations(chat.complete(List.copyOf(messages)), evidence.hits().size());
-        List<AskResponse.Citation> citations = citationsUsedBy(answer, evidence.hits());
-        if (!citations.isEmpty()) {
-            return new AskResponse(answer, citations);
+        CitationResult cited = renumberCitations(answer, evidence.hits());
+        if (!cited.citations().isEmpty()) {
+            return new AskResponse(cited.answer(), cited.citations());
         }
 
         // 部分兼容模型会忽略首次引用要求；只允许一次不增加事实的格式修订。
@@ -57,9 +57,9 @@ public class AskService {
         repairMessages.add(new ChatMessage("assistant", answer));
         repairMessages.add(new ChatMessage("user", citationRepairInstruction(evidence.hits().size())));
         String repaired = normalizeCitations(chat.complete(List.copyOf(repairMessages)), evidence.hits().size());
-        List<AskResponse.Citation> repairedCitations = citationsUsedBy(repaired, evidence.hits());
-        if (!repairedCitations.isEmpty()) {
-            return new AskResponse(repaired, repairedCitations);
+        CitationResult repairedResult = renumberCitations(repaired, evidence.hits());
+        if (!repairedResult.citations().isEmpty()) {
+            return new AskResponse(repairedResult.answer(), repairedResult.citations());
         }
 
         // 不向客户端返回无法与资料建立关系的自由回答，改为提供可直接核对的候选片段。
@@ -82,26 +82,30 @@ public class AskService {
         }
         List<AskRequest.HistoryMessage> filtered = history.stream()
                 .filter(item -> "user".equalsIgnoreCase(item.role()) || "assistant".equalsIgnoreCase(item.role()))
+                .map(item -> "assistant".equalsIgnoreCase(item.role())
+                        ? new AskRequest.HistoryMessage(item.role(), stripHistoricalCitations(item.content()))
+                        : item)
                 .toList();
         return filtered.subList(Math.max(0, filtered.size() - 6), filtered.size());
     }
 
-    private List<AskResponse.Citation> citationsUsedBy(String answer, List<RetrievalHit> hits) {
-        Set<Integer> used = new HashSet<>();
+    /** 以正文首次出现顺序同时重写编号和 citations，前端无需再次猜测编号。 */
+    private CitationResult renumberCitations(String answer, List<RetrievalHit> hits) {
+        Map<Integer, Integer> displayNumbers = new LinkedHashMap<>();
         Matcher matcher = CITATION.matcher(answer);
+        StringBuffer rewritten = new StringBuffer();
         while (matcher.find()) {
-            int number = Integer.parseInt(matcher.group(1));
-            if (number >= 1 && number <= hits.size()) {
-                used.add(number);
-            }
+            int candidateNumber = Integer.parseInt(matcher.group(1));
+            int displayNumber = displayNumbers.computeIfAbsent(candidateNumber,
+                    ignored -> displayNumbers.size() + 1);
+            matcher.appendReplacement(rewritten, Matcher.quoteReplacement("[" + displayNumber + "]"));
         }
+        matcher.appendTail(rewritten);
         List<AskResponse.Citation> citations = new ArrayList<>();
-        for (int number = 1; number <= hits.size(); number++) {
-            if (used.contains(number)) {
-                citations.add(toCitation(number, hits.get(number - 1)));
-            }
+        for (Map.Entry<Integer, Integer> entry : displayNumbers.entrySet()) {
+            citations.add(toCitation(entry.getValue(), hits.get(entry.getKey() - 1)));
         }
-        return List.copyOf(citations);
+        return new CitationResult(rewritten.toString(), List.copyOf(citations));
     }
 
     private List<AskResponse.Citation> allCitations(List<RetrievalHit> hits) {
@@ -135,6 +139,10 @@ public class AskService {
                 + "，至少使用一个编号，只输出修订后的回答。";
     }
 
+    private String stripHistoricalCitations(String content) {
+        return CITATION.matcher(content == null ? "" : content).replaceAll("").replaceAll("[ \\t]{2,}", " ").trim();
+    }
+
     private String validateQuestion(String value) {
         String question = value == null ? "" : value.trim();
         int length = question.codePointCount(0, question.length());
@@ -142,5 +150,8 @@ public class AskService {
             throw new BadRequestException("Question must contain 1 to " + maxQuestionCodePoints + " characters");
         }
         return question;
+    }
+
+    private record CitationResult(String answer, List<AskResponse.Citation> citations) {
     }
 }

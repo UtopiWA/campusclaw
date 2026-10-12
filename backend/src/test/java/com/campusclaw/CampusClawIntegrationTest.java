@@ -215,6 +215,10 @@ class CampusClawIntegrationTest {
         assertThat(cleanupDdl.replace("`", ""))
                 .contains("point_ids json", "retry_count int", "next_retry_at datetime(6)")
                 .doesNotContain("FOREIGN KEY", "chunk_text", "embedding", "api_key");
+        String materialDdl = jdbc.queryForMap("SHOW CREATE TABLE materials").values().stream()
+                .map(String::valueOf).filter(value -> value.contains("CREATE TABLE")).findFirst().orElseThrow();
+        assertThat(materialDdl.replace("`", ""))
+                .contains("processing_stage varchar(20)", "failure_code varchar(40)", "retryable tinyint(1)");
     }
 
     @Test
@@ -264,6 +268,8 @@ class CampusClawIntegrationTest {
                 .andExpect(jsonPath("$.material.hasFile").value(true))
                 .andExpect(jsonPath("$.material.fileSizeBytes").value(uploadedBytes.length))
                 .andExpect(jsonPath("$.material.indexStatus").value("PENDING"))
+                .andExpect(jsonPath("$.material.processingStage").value("QUEUED"))
+                .andExpect(jsonPath("$.material.retryable").value(false))
                 .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("storedPath"))))
                 .andReturn();
         long uploadedId = ((Number) com.jayway.jsonpath.JsonPath.read(
@@ -278,6 +284,18 @@ class CampusClawIntegrationTest {
         materialService.parseStoredMaterial(uploadedId, teacherClassId);
         assertThat(knowledgeEntries.findAllByMaterialIdAndClassIdOrderByChunkIndex(
                 uploadedId, teacherClassId)).hasSize(entryCount);
+
+        long firstChunkId = retrievalChunks.findAllByMaterialIdAndClassIdOrderByChunkIndex(
+                uploadedId, teacherClassId).get(0).getId();
+        mockMvc.perform(get("/api/materials/{id}/chunks/{chunkId}/context", uploadedId, firstChunkId)
+                        .with(bearer(studentASession)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.materialId").value(uploadedId))
+                .andExpect(jsonPath("$.chunkId").value(firstChunkId))
+                .andExpect(jsonPath("$.neighbors[0].target").value(true));
+        mockMvc.perform(get("/api/materials/{id}/chunks/{chunkId}/context", uploadedId, firstChunkId)
+                        .with(bearer(studentBSession)))
+                .andExpect(status().isNotFound());
 
         mockMvc.perform(get("/api/materials/{id}/content", uploadedId).with(bearer(studentASession)))
                 .andExpect(status().isOk())
@@ -344,6 +362,8 @@ class CampusClawIntegrationTest {
         long malformedId = ((Number) com.jayway.jsonpath.JsonPath.read(
                 malformedUpload.getResponse().getContentAsString(StandardCharsets.UTF_8), "$.materialId")).longValue();
         awaitMaterialStatus(malformedId, "FAILED");
+        assertThat(materials.findById(malformedId).orElseThrow().getFailureCode().name()).isEqualTo("INVALID_TEXT");
+        assertThat(materials.findById(malformedId).orElseThrow().isRetryable()).isFalse();
         assertThat(knowledgeEntries.findAllByMaterialIdAndClassIdOrderByChunkIndex(
                 malformedId, users.findByUsername("teacher-a").orElseThrow().getClassId())).isEmpty();
 

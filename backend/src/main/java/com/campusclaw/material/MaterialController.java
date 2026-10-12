@@ -68,6 +68,11 @@ public class MaterialController {
         return fileResponse(id, false);
     }
 
+    @GetMapping("/{id}/chunks/{chunkId}/context")
+    public MaterialChunkContext chunkContext(@PathVariable Long id, @PathVariable Long chunkId) {
+        return materials.readChunkContext(id, chunkId, currentUsers.requireUser());
+    }
+
     @GetMapping("/{id}/download")
     public ResponseEntity<byte[]> download(@PathVariable Long id) {
         return fileResponse(id, true);
@@ -82,7 +87,7 @@ public class MaterialController {
             // upload() 返回时主事务已提交，后台线程只携带受控标识重新加载数据。
             ingestion.ingestAsync(stored.id(), teacher.getClassId());
         } catch (TaskRejectedException exception) {
-            // PENDING 状态会由启动补偿恢复，不把已成功保存的材料误报为上传失败。
+            // PENDING 状态会由后台恢复调度重新提交，不把已成功保存的材料误报为上传失败。
             log.warn("Material {} ingestion queue is full; leaving it pending", stored.id());
         }
         return Map.of("materialId", stored.id(), "material", stored);
@@ -92,6 +97,19 @@ public class MaterialController {
     public MaterialView rebuildIndex(@PathVariable Long id, @Valid @RequestBody RebuildIndexRequest request) {
         var teacher = currentUsers.requireTeacher();
         return indexing.rebuild(id, teacher.getClassId(), request.toOptions());
+    }
+
+    @PostMapping("/{id}/processing/retry")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public MaterialView retryProcessing(@PathVariable Long id) {
+        var teacher = currentUsers.requireTeacher();
+        MaterialView queued = ingestion.prepareRetry(id, teacher.getClassId());
+        try {
+            ingestion.ingestAsync(id, teacher.getClassId());
+        } catch (TaskRejectedException exception) {
+            log.warn("Material {} retry queue is full; leaving it pending", id);
+        }
+        return queued;
     }
 
     @PatchMapping("/{id}")

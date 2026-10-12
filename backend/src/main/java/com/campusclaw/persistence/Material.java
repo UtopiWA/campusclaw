@@ -39,11 +39,22 @@ public class Material {
     private IndexStatus indexStatus = IndexStatus.PENDING;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "processing_stage", nullable = false)
+    private ProcessingStage processingStage = ProcessingStage.QUEUED;
+
+    @Enumerated(EnumType.STRING)
     @Column(name = "index_strategy", nullable = false)
     private IndexStrategy indexStrategy = IndexStrategy.AUTO;
 
     @Column(name = "index_error", length = 500)
     private String indexError;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "failure_code", length = 40)
+    private ProcessingFailureCode failureCode;
+
+    @Column(nullable = false)
+    private boolean retryable;
 
     @Column(name = "indexed_at")
     private Instant indexedAt;
@@ -132,6 +143,18 @@ public class Material {
         return indexError;
     }
 
+    public ProcessingStage getProcessingStage() {
+        return processingStage;
+    }
+
+    public ProcessingFailureCode getFailureCode() {
+        return failureCode;
+    }
+
+    public boolean isRetryable() {
+        return retryable;
+    }
+
     public Instant getIndexedAt() {
         return indexedAt;
     }
@@ -139,20 +162,40 @@ public class Material {
     /** 索引状态只通过领域方法切换，避免业务层遗漏错误信息和完成时间的联动更新。 */
     public void markIndexing(IndexStrategy strategy) {
         this.indexStatus = IndexStatus.INDEXING;
+        this.processingStage = ProcessingStage.INDEXING;
         this.indexStrategy = strategy;
         this.indexError = null;
+        this.failureCode = null;
+        this.retryable = false;
         this.indexedAt = null;
     }
 
     public void markReady() {
         this.indexStatus = IndexStatus.READY;
+        this.processingStage = ProcessingStage.COMPLETED;
         this.indexError = null;
+        this.failureCode = null;
+        this.retryable = false;
         this.indexedAt = Instant.now();
     }
 
-    public void markFailed(String message) {
+    public void markFailed(ProcessingStage stage, ProcessingFailureCode code,
+                           boolean canRetry, String message) {
         this.indexStatus = IndexStatus.FAILED;
+        this.processingStage = stage;
+        this.failureCode = code;
+        this.retryable = canRetry;
         this.indexError = message == null ? "Indexing failed" : message.substring(0, Math.min(500, message.length()));
+        this.indexedAt = null;
+    }
+
+    /** 教师重试只负责重新排队，真正认领仍由独立事务完成。 */
+    public void queueForRetry() {
+        this.indexStatus = IndexStatus.PENDING;
+        this.processingStage = ProcessingStage.QUEUED;
+        this.failureCode = null;
+        this.retryable = false;
+        this.indexError = null;
         this.indexedAt = null;
     }
 

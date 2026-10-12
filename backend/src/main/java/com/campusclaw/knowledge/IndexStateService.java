@@ -1,6 +1,9 @@
 package com.campusclaw.knowledge;
 
+import com.campusclaw.common.BadRequestException;
+import com.campusclaw.common.DependencyUnavailableException;
 import com.campusclaw.common.NotFoundException;
+import com.campusclaw.material.MaterialView;
 import com.campusclaw.persistence.IndexStatus;
 import com.campusclaw.persistence.IndexStrategy;
 import com.campusclaw.persistence.KnowledgeChunk;
@@ -8,6 +11,9 @@ import com.campusclaw.persistence.KnowledgeChunkRepository;
 import com.campusclaw.persistence.KnowledgeEntryRepository;
 import com.campusclaw.persistence.Material;
 import com.campusclaw.persistence.MaterialRepository;
+import com.campusclaw.persistence.ProcessingFailureCode;
+import com.campusclaw.persistence.ProcessingStage;
+import java.time.Instant;
 import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -36,6 +42,16 @@ public class IndexStateService {
     public List<Long> existingPointIds(Long materialId, Long classId) {
         return chunks.findAllByMaterialIdAndClassIdOrderByChunkIndex(materialId, classId).stream()
                 .map(KnowledgeChunk::getId).toList();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean claimPending(Long materialId, Long classId) {
+        return materials.claimPending(materialId, classId, Instant.now()) == 1;
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean requeueStale(Long materialId, Long classId, Instant staleBefore) {
+        return materials.requeueStale(materialId, classId, staleBefore, Instant.now()) == 1;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -76,20 +92,36 @@ public class IndexStateService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void markFailed(Long materialId, Long classId, List<Long> chunkIds) {
+    public void markFailed(Long materialId, Long classId, List<Long> chunkIds, RuntimeException cause) {
+        boolean dependencyFailure = cause instanceof DependencyUnavailableException;
+        ProcessingFailureCode code = dependencyFailure
+                ? ProcessingFailureCode.DEPENDENCY_UNAVAILABLE
+                : ProcessingFailureCode.PROCESSING_ERROR;
         materials.findByIdAndClassId(materialId, classId).ifPresent(material -> {
-            material.markFailed("Index dependency unavailable");
+            material.markFailed(ProcessingStage.INDEXING, code, true, "Indexing failed");
             materials.save(material);
         });
         chunks.findAllByIdInAndClassIdAndIndexStatus(chunkIds, classId, IndexStatus.PENDING)
-                .forEach(chunk -> chunk.markFailed("Index dependency unavailable"));
+                .forEach(chunk -> chunk.markFailed(
+                        dependencyFailure ? "Index dependency unavailable" : "Indexing failed"));
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void markMaterialFailed(Long materialId, Long classId, String message) {
+    public void markMaterialFailed(Long materialId, Long classId, ProcessingStage stage,
+                                   ProcessingFailureCode code, boolean retryable, String message) {
         materials.findByIdAndClassId(materialId, classId).ifPresent(material -> {
-            material.markFailed(message);
+            material.markFailed(stage, code, retryable, message);
             materials.saveAndFlush(material);
         });
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public MaterialView queueForRetry(Long materialId, Long classId) {
+        Material material = require(materialId, classId);
+        if (material.getIndexStatus() != IndexStatus.FAILED || !material.isRetryable()) {
+            throw new BadRequestException("Material is not retryable");
+        }
+        material.queueForRetry();
+        return MaterialView.from(materials.saveAndFlush(material));
     }
 }
