@@ -15,4 +15,4 @@
 
 - [x] 3.1 运行 `npm.cmd test -- --run` 和 `npm.cmd run build`，确认材料页改动及既有登录、查看、下载、检索页面无回归。
 - [x] 3.2 在桌面和窄屏人工检查失败材料行的阶段、原因、上传错误和操作布局，确认无横向遮挡且键盘可达。
-- [ ] 3.3 同步 `learning` 中材料状态与规约结论，对 change 执行严格校验；实现和人工审核通过后同步主规格并归档，确认 `openspec.cmd validate --all --strict` 通过且不存在活动 change。
+- [x] 3.3 同步 `learning` 中材料状态与规约结论，对 change 执行严格校验；实现和人工审核通过后同步主规格并归档，确认 `openspec.cmd validate --all --strict` 通过且不存在活动 change。
