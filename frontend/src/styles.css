@@ -148,7 +148,9 @@ h1, h2, h3, p { margin-top: 0; }
 .tag { align-self: flex-start; padding: 3px 7px; color: var(--brand-700); background: var(--brand-100); border-radius: 5px; font-size: 9px; font-weight: 650; white-space: nowrap; }
 .tag--muted { color: #737983; background: #f0f1f3; }
 .material-main > p { overflow: hidden; margin-bottom: 8px; color: #777d86; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.material-main > .material-failure { color: #9d252c; white-space: normal; }
+.material-failure { margin-bottom: 8px; color: #9d252c; font-size: 12px; }
+.material-failure p { margin: 0; white-space: normal; }
+.material-failure p + p { margin-top: 3px; }
 .material-list-tools { display: flex; align-items: center; gap: 8px; }
 .material-meta { display: flex; gap: 18px; color: #a0a4ac; font-size: 10px; }
 .material-meta span + span { position: relative; }
@@ -258,6 +260,7 @@ h1, h2, h3, p { margin-top: 0; }
 .file-drop-icon { display: grid; width: 52px; height: 52px; margin-bottom: 3px; place-items: center; color: var(--brand-700); background: var(--brand-100); border-radius: 50%; }
 .file-drop strong { color: #454951; font-size: 14px; }
 .file-drop > span:last-child { font-size: 11px; }
+.upload-error { margin: 14px 0 0; }
 .file-preview { min-height: 300px; max-height: 54vh; margin: 0; overflow: auto; padding: 20px; color: #30343a; background: #f7f8fa; border: 1px solid #e4e6ea; border-radius: 9px; font: 13px/1.8 Consolas, "SFMono-Regular", "Microsoft YaHei", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .citation-context { display: grid; gap: 8px; margin-bottom: 14px; padding: 14px; background: #fbf8f8; border: 1px solid #eadcdd; border-radius: 10px; }
 .citation-context-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #777d85; font-size: 10px; }

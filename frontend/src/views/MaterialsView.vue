@@ -11,6 +11,7 @@ const materials = ref([])
 const selectedFile = ref(null)
 const fileInput = ref(null)
 const uploadBusy = ref(false)
+const uploadError = ref('')
 const renameBusy = ref(false)
 const deleteBusy = ref(false)
 const rebuildBusy = ref(false)
@@ -96,17 +97,27 @@ function handleVisibilityChange() {
 
 function chooseFile(event) {
   selectedFile.value = event.target.files?.[0] || null
+  uploadError.value = ''
 }
 
 function dropFile(event) {
   dragActive.value = false
   const file = event.dataTransfer?.files?.[0]
-  if (file) selectedFile.value = file
+  if (file) {
+    selectedFile.value = file
+    uploadError.value = ''
+  }
+}
+
+function openUpload() {
+  uploadError.value = ''
+  uploadOpen.value = true
 }
 
 function closeUpload() {
   if (uploadBusy.value) return
   uploadOpen.value = false
+  uploadError.value = ''
   selectedFile.value = null
   if (fileInput.value) fileInput.value.value = ''
 }
@@ -114,6 +125,7 @@ function closeUpload() {
 async function upload() {
   if (!selectedFile.value) return
   uploadBusy.value = true
+  uploadError.value = ''
   error.value = ''
   notice.value = ''
   const data = new FormData()
@@ -129,7 +141,8 @@ async function upload() {
     pollStartedAt = Date.now()
     await loadMaterials()
   } catch (exception) {
-    error.value = exception.message
+    // 上传弹窗保持打开时在当前操作区域反馈错误，避免消息被模态遮罩挡住。
+    uploadError.value = exception.message
   } finally {
     uploadBusy.value = false
   }
@@ -263,6 +276,15 @@ function failureLabel(material) {
   })[material.failureCode] || '后台处理失败。'
 }
 
+// 将稳定的后台处理阶段转换为面向用户的脱敏文案，未知值统一使用通用兜底。
+function failureStageLabel(material) {
+  return ({
+    PARSING: '正文解析',
+    INDEXING: '索引构建',
+    QUEUED: '任务调度',
+  })[material.processingStage] || '后台处理'
+}
+
 async function retryProcessing(material) {
   if (retryBusyIds.value.has(material.id)) return
   retryBusyIds.value = new Set(retryBusyIds.value).add(material.id)
@@ -349,7 +371,7 @@ onBeforeUnmount(() => {
           <h1>{{ isTeacher ? '讲义管理' : '讲义与检索' }}</h1>
           <p>{{ isTeacher ? '管理本班讲义，上传后自动解析并沉淀为知识片段。' : '查看和下载教师为本班准备的教学材料。' }}</p>
         </div>
-        <button v-if="isTeacher" class="button button--primary button--large" type="button" @click="uploadOpen = true">
+        <button v-if="isTeacher" class="button button--primary button--large" type="button" @click="openUpload">
           <AppIcon name="upload" />上传讲义
         </button>
       </header>
@@ -396,7 +418,10 @@ onBeforeUnmount(() => {
                 <span class="index-badge" :class="`index-badge--${(material.indexStatus || 'PENDING').toLowerCase()}`">{{ indexLabel(material) }}</span>
               </div>
               <p>{{ material.originalFilename || '系统示例知识条目（无原始文件）' }}</p>
-              <p v-if="material.indexStatus === 'FAILED'" class="material-failure">{{ failureLabel(material) }}</p>
+              <div v-if="material.indexStatus === 'FAILED'" class="material-failure">
+                <p><strong>失败阶段：</strong>{{ failureStageLabel(material) }}</p>
+                <p>{{ failureLabel(material) }}</p>
+              </div>
               <div class="material-meta">
                 <span>更新于 {{ formatDate(material.updatedAt || material.createdAt) }}</span>
                 <span v-if="material.hasFile">{{ formatSize(material.fileSizeBytes) }}</span><span v-else>文件操作不可用</span>
@@ -430,6 +455,7 @@ onBeforeUnmount(() => {
       <strong>{{ selectedFile?.name || '点击选择，或将文件拖到这里' }}</strong>
       <span>{{ selectedFile ? formatSize(selectedFile.size) : '支持 UTF-8 编码的 .txt、.md，最大 2 MiB' }}</span>
     </label>
+    <p v-if="uploadError" class="feedback feedback--error upload-error" role="alert">{{ uploadError }}</p>
     <template #footer>
       <button class="button button--secondary" type="button" :disabled="uploadBusy" @click="closeUpload">取消</button>
       <button class="button button--primary" type="button" :disabled="!selectedFile || uploadBusy" @click="upload">{{ uploadBusy ? '正在上传…' : '上传并后台解析' }}</button>
