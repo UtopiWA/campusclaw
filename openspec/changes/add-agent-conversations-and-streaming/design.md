@@ -153,6 +153,16 @@ SSE 文档提供四类事件的 schema 示例，但不把供应商 URL、模型�
 
 选择理由：只做 Controller mock 无法证明迁移、代理和网络分块；所有测试都调用真实模型又慢且会消耗密钥。分层后算法可快速重复，基础设施风险仍有针对性覆盖。
 
+### Decision 12: 独立 Python 接口套件按 URL 组织并同时核对响应与数据库
+
+在仓库根目录新增 `apitest/`，其中 `cases/` 按真实 URL 逐级建目录，每个受测的 HTTP 方法使用一个同名脚本，例如 `cases/api/auth/login/POST.py` 对应 `POST /api/auth/login`。动态路径段统一使用以下划线开头的语义目录（例如 `cases/api/conversations/_id/messages/POST.py`），脚本从运行上下文取得实际资源 ID，不把演示 ID 写死。公共的 HTTP、Bearer、SSE、MySQL、断言、造数和清理逻辑放在共享模块中，接口脚本只描述当前方法的请求、响应和持久化预期。
+
+`apitest/run_all.py` 负责加载本机 `.env`、按稳定顺序发现和执行脚本、传递登录后获得的 Bearer Token 与前序创建的资源标识，并在 `apitest/reports/` 生成 HTML 报告。报告至少列出方法、路径、结果、耗时和失败断言；报告目录必须加入 Git 忽略，且报告、控制台输出和异常均不得记录完整令牌、密码、模型密钥或上游响应正文。套件面向已启动的 Compose 环境，不替代现有 JUnit/Vitest/Testcontainers 测试。
+
+每个用例除断言 HTTP 状态外，还要断言关键响应字段；会产生持久化副作用的用例通过只读 MySQL 查询核对用户、班级、绑定、会话、消息或引用状态，并只清理本套件创建且带唯一运行标识的数据。最小覆盖包括登录、`POST /api/retrieval/search`、智能体提示词与技能配置、`POST /api/conversations` 以及 `POST /api/conversations/{id}/messages`；流式用例必须解析 `meta/delta/done`，并核对拼接正文与数据库中已完成助手消息一致。
+
+选择理由：课程要求一个接口一个脚本、一键运行和 HTML 报告，而现有框架内测试无法作为独立的接口验收交付物。URL 目录映射便于从路由定位脚本，共享运行上下文避免复制认证和造数代码，数据库联合断言则能发现“响应成功但未正确落库”的问题。
+
 ## Risks / Trade-offs
 
 - [V5 重构 `skills.assistant_id` 可能丢失旧关联] → 迁移先复制并核对行数，再删除旧外键/列；增加 V4 快照升级和空库测试。
@@ -164,6 +174,7 @@ SSE 文档提供四类事件的 schema 示例，但不把供应商 URL、模型�
 - [SSE 线程被慢模型占用] → 有界执行器、连接/读取超时、代理超时和资源关闭共同限制占用；饱和在首帧前返回 503。
 - [消息引用 JSON 随 DTO 演进难查询] → 引用是小型不可变展示快照，查询仍通过材料/切片表；JSON schema 由应用版本读取并做兼容默认。
 - [Swagger 公开扩大信息面] → 仅公开结构且不含内部配置，所有业务数据和试调仍需 Bearer Token；生产如需关闭可用环境配置控制 UI，不改变 API。
+- [接口测试报告或失败日志泄露凭据] → 所有配置只从本机 `.env` 读取，公共报告器统一脱敏，报告目录加入 Git 忽略，测试脚本和示例不得包含真实口令或令牌。
 
 ## Migration Plan
 
@@ -171,6 +182,7 @@ SSE 文档提供四类事件的 schema 示例，但不把供应商 URL、模型�
 2. 部署后端实体与 Repository，使应用可读新旧演示配置；更新种子为幂等补齐，再启用配置、会话和流式 API。
 3. 部署 Springdoc 与专用异步执行器；随后更新 Nginx 流式 location，并用低速 mock 上游确认浏览器在完成前收到 delta。
 4. 部署教师配置页和持久化会话页；旧 `/search` 与 `/api/ask` 保持可用，可独立回归。
-5. 更新 README 与 `learning`，完成双班级、角色、迁移、流故障、刷新恢复、Swagger 和 Compose 验收后再开放导航入口。
+5. 增加 `apitest/` 及一键运行入口，在 Compose 环境验证登录、检索、配置和流式会话的响应与数据库状态，并确认 HTML 报告被 Git 忽略。
+6. 更新 README 与 `learning`，完成双班级、角色、迁移、流故障、刷新恢复、Swagger 和 Compose 验收后再开放导航入口。
 
 应用回滚时先隐藏新前端入口并回滚应用/Nginx；旧版实体无法校验新增后的 `skills` 表结构，因此不要直接运行旧后端连接 V5 库。需要应用级回滚时使用部署前数据库备份恢复到 V4。正式数据一旦产生会话，若要长期移除本能力，应另建 OpenSpec change 和显式导出/清理 migration，不手工删表或回退 Flyway 校验和。
