@@ -10,3 +10,5 @@ uploads/
 .idea/
 .vscode/
 .docker-config/
+apitest/reports/
+apitest/**/__pycache__/

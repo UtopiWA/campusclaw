@@ -152,6 +152,19 @@ event: done   data: {messageId}             # 助手消息事务提交后发送
 
 API 文档位于 <http://localhost:8080/swagger-ui/index.html>，OpenAPI JSON 位于 <http://localhost:8080/v3/api-docs>。两条文档路径允许匿名访问，所有 `/api/**` 业务接口仍要求 Bearer JWT；文档只描述配置名称和协议，不包含真实密钥或口令。
 
+## 接口回归测试
+
+`apitest/` 提供按 URL 和 HTTP 方法组织的 Python 接口脚本，覆盖登录、本班检索、提示词/技能、会话创建和 SSE 消息。套件会对照关键响应字段与 MySQL 状态，并在结束时恢复原智能体配置、清理带本轮唯一标识的临时技能和会话。
+
+完整 Compose 环境启动且 A 班至少有一份 READY 材料后执行：
+
+```powershell
+python -m pip install -r apitest/requirements.txt
+python apitest/run_all.py
+```
+
+配置默认从本机 `.env` 读取；可选的 `APITEST_*` 覆盖项和测试数据边界见 `apitest/README.md`。HTML 报告生成到已被 Git 忽略的 `apitest/reports/`。报告与控制台输出会脱敏，测试脚本不得硬编码真实密码、令牌或模型密钥。
+
 ## 前端界面约定
 
 已登录页面统一复用 `frontend/src/components/AppShell.vue`，全局颜色、圆角、阴影、间距和响应式断点集中在 `frontend/src/styles.css` 的设计令牌中。后续新增助手、作业、审计或学情页面时，应继续使用共享侧边栏、班级顶栏、页面标题区、卡片、按钮和 `BaseModal`，避免创建另一套主题。
@@ -177,8 +190,10 @@ Set-Location ..\backend
 .\mvnw.cmd test
 
 Set-Location ..
-docker compose --env-file .env.example config --quiet
+docker compose --env-file .env config --quiet
 openspec validate add-agent-conversations-and-streaming --strict
+
+python apitest/run_all.py
 ```
 
 后端集成测试使用 Testcontainers 启动真实 MySQL 8，因此运行完整测试时 Docker 必须可用。Docker 不可用时只能验证不依赖数据库的单元、MockMvc 和网关测试，不能据此宣称 V5 迁移或端到端会话已经通过。
