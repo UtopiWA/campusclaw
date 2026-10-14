@@ -13,6 +13,7 @@ public class DemoSeedService {
     private final AssignmentRepository assignments;
     private final AssistantRepository assistants;
     private final SkillRepository skills;
+    private final AssistantSkillRepository assistantSkills;
     private final PasswordEncoder passwordEncoder;
 
     public DemoSeedService(
@@ -23,6 +24,7 @@ public class DemoSeedService {
             AssignmentRepository assignments,
             AssistantRepository assistants,
             SkillRepository skills,
+            AssistantSkillRepository assistantSkills,
             PasswordEncoder passwordEncoder) {
         this.classRooms = classRooms;
         this.users = users;
@@ -31,6 +33,7 @@ public class DemoSeedService {
         this.assignments = assignments;
         this.assistants = assistants;
         this.skills = skills;
+        this.assistantSkills = assistantSkills;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -56,10 +59,10 @@ public class DemoSeedService {
                 .orElseGet(() -> assistants.save(new Assistant(classA.getId(), "A 班教研助手")));
         Assistant assistantB = assistants.findFirstByClassIdAndName(classB.getId(), "B 班教研助手")
                 .orElseGet(() -> assistants.save(new Assistant(classB.getId(), "B 班教研助手")));
-        skills.findFirstByAssistantIdAndName(assistantA.getId(), "材料整理")
-                .orElseGet(() -> skills.save(new Skill(assistantA.getId(), classA.getId(), "材料整理")));
-        skills.findFirstByAssistantIdAndName(assistantB.getId(), "材料整理")
-                .orElseGet(() -> skills.save(new Skill(assistantB.getId(), classB.getId(), "材料整理")));
+        Skill skillA = createSeedSkill(classA.getId());
+        Skill skillB = createSeedSkill(classB.getId());
+        bindSeedSkill(assistantA.getId(), skillA.getId());
+        bindSeedSkill(assistantB.getId(), skillB.getId());
     }
 
     private UserAccount createUser(String username, String password, Role role, Long classId) {
@@ -73,5 +76,26 @@ public class DemoSeedService {
             knowledgeEntries.save(new KnowledgeEntry(material.getId(), classId, 0, body));
             return material;
         });
+    }
+
+    private Skill createSeedSkill(Long classId) {
+        return skills.findFirstByClassIdAndName(classId, "材料整理")
+                .orElseGet(() -> skills.save(new Skill(
+                        classId,
+                        "材料整理",
+                        "材料,整理,归纳",
+                        "",
+                        "knowledge_search",
+                        true,
+                        "根据学生的问题整理已绑定材料，并清楚标注引用。",
+                        "名称：材料整理\n适用条件：材料,整理,归纳\n资料：\n"
+                                + "工具：knowledge_search\n启用：是\n\n"
+                                + "根据学生的问题整理已绑定材料，并清楚标注引用。")));
+    }
+
+    private void bindSeedSkill(Long assistantId, Long skillId) {
+        if (!assistantSkills.existsByAssistantIdAndSkillId(assistantId, skillId)) {
+            assistantSkills.save(new AssistantSkill(assistantId, skillId));
+        }
     }
 }

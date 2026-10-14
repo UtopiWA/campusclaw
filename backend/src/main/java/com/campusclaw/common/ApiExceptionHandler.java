@@ -10,6 +10,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.core.task.TaskRejectedException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -61,6 +62,11 @@ public class ApiExceptionHandler {
     @ExceptionHandler(DependencyUnavailableException.class)
     ResponseEntity<Map<String, String>> dependencyFailure(DependencyUnavailableException exception) {
         return error(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage());
+    }
+
+    @ExceptionHandler(TaskRejectedException.class)
+    ResponseEntity<Map<String, String>> taskRejected() {
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "Streaming service is temporarily unavailable");
     }
 
     private ResponseEntity<Map<String, String>> error(HttpStatus status, String message) {

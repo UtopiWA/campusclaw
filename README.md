@@ -1,8 +1,8 @@
 # CampusClaw
 
 - **价值主张：** 把分散的校本教学材料沉淀为按班级隔离、可持续复用的教研知识资产。
-- **核心场景：** 教师上传和管理教学材料，系统生成可追溯切片并写入向量索引；同班师生可查看、下载、按关键词/语义/混合模式检索，并基于检索依据问答。
-- **本次不做：** 通用自由对话、作业提交与批改、注册与找回密码、SSO、多校多租户及生产级高可用。
+- **核心场景：** 教师上传和管理教学材料，配置技能与智能体；同班师生可检索材料，并在可恢复的私人会话中获得带引用的流式回答。
+- **本次不做：** 模型自主选择任意工具的开放式 Agent、作业提交与批改、注册与找回密码、SSO、多校多租户及生产级高可用。
 
 ## 技术栈
 
@@ -61,7 +61,7 @@ Compose 仅将 MySQL 暴露到宿主机回环地址，不会监听局域网网�
 | `student-a1` | 学生 | 班级 A |
 | `student-b1` | 学生 | 班级 B |
 
-教师可以上传、查看、下载、重命名、删除和按三种策略重建本班材料索引；临时处理失败时还可以重新提交。学生可以查看、下载和检索，但不能执行管理操作。任何客户端提交的 `class_id` 都会被忽略，数据范围只取 Bearer JWT 对应用户在数据库中的最新班级；跨班按 ID 管理统一返回 404，跨班检索返回空结果。
+教师可以管理本班材料、技能和智能体绑定；临时材料处理失败时还可以重新提交。学生可以查看、下载、检索和使用已启用智能体，但不能执行管理操作。任何客户端提交的 `class_id` 都不会成为授权依据，数据范围只取 Bearer JWT 对应用户在数据库中的最新班级；跨班按 ID 管理统一返回 404，跨班检索返回空结果。
 
 系统种子材料只包含知识条目，没有对应的物理原文件，页面会将查看和下载按钮标记为不可用。教师新上传的 `.txt`/`.md` 文件可正常查看和下载。
 
@@ -121,11 +121,36 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 | `POST /api/materials/{id}/processing/retry` | 教师重新提交可重试的失败材料 |
 | `POST /api/retrieval/search` | keyword/vector/hybrid 可追溯检索，默认 hybrid |
 | `POST /api/ask` | 固定 hybrid 前 4 条依据的问答与引用 |
+| `GET/POST /api/skills` | 列出技能；教师从结构化原文创建技能 |
+| `GET/PUT/DELETE /api/skills/{id}` | 读取、更新或由教师删除本班技能 |
+| `GET/POST /api/assistants` | 列出智能体；教师创建完整智能体配置 |
+| `GET/PUT /api/assistants/{id}` | 读取或由教师原子替换智能体主体和绑定 |
+| `GET/POST /api/conversations` | 列出本人会话或选择已启用智能体创建会话 |
+| `GET /api/conversations/{id}` | 恢复本人会话的消息、状态、技能和引用 |
+| `POST /api/conversations/{id}/messages` | 提交问题并返回 UTF-8 SSE 回答 |
 | `GET /health` | 无需登录的应用与数据库健康检查 |
 
 匿名 API 请求返回 401，角色不足返回 403，跨班资源返回不泄露存在性的 404。
 
 检索的 `query` 为 1～1000 个 Unicode 字符，`limit` 为 1～20。keyword 仅依赖 MySQL；vector 和 hybrid 在嵌入或 Qdrant 不可用时返回脱敏 503。无命中始终返回 200、空 `hits` 与“资料中未找到相关内容”；问答在此分支不会调用 Chat。回答只保留实际引用的候选，并按正文首次出现顺序从 1 连续编号；前端可直接展开引用摘录，也可跳转到材料页突出目标切片及相邻上下文。Qdrant payload 不保存正文，point ID、payload `chunk_id` 与 MySQL chunk ID 保持一致。
+
+## 智能体配置与流式会话
+
+教师可在 `/assistants` 编辑技能原文，并配置智能体名称、角色提示词、启用状态、技能和 READY 材料绑定。技能只允许 `knowledge_search` 工具；服务端先完整解析和验证原文，再写入结构化字段，失败不会覆盖旧配置。学生只能读取已启用智能体摘要，不能看到提示词和绑定。
+
+`/conversations` 是独立于旧 `/search` 的持久化会话入口。会话固定当前用户、班级和智能体；每轮提问会重新读取教师最新绑定，但单轮开始后使用不可变快照。用户消息先提交，随后只在绑定材料内执行检索。没有依据时仍调用模型，但服务端会从增量正文中移除 `[n]` 引用标记。
+
+正常 SSE 协议为：
+
+```text
+event: meta   data: {status, skillName, citations}
+event: delta  data: {text}                 # 零到多次，只含新增文本
+event: done   data: {messageId}             # 助手消息事务提交后发送
+```
+
+流开始后失败时不发送 `done`：已有正文会尽力保存为 `FAILED` 并发送脱敏 `error`，没有正文则不创建空助手消息。前端保留部分回答并提供重试；完成后与刷新时均从服务端详情恢复事实状态。旧 `/api/ask` 仍保持非流式、无命中不调用 Chat 的原语义。
+
+API 文档位于 <http://localhost:8080/swagger-ui/index.html>，OpenAPI JSON 位于 <http://localhost:8080/v3/api-docs>。两条文档路径允许匿名访问，所有 `/api/**` 业务接口仍要求 Bearer JWT；文档只描述配置名称和协议，不包含真实密钥或口令。
 
 ## 前端界面约定
 
@@ -135,9 +160,10 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 - 桌面端：232px 侧边栏、60px 顶栏、浅灰工作区与白色内容卡片。
 - 中等宽度：侧边栏收缩为 76px 图标栏，图标保留可访问名称。
 - 手机端：隐藏侧栏，保留移动品牌顶栏，内容和操作纵向排列。
-- 尚未实现的菜单明确显示“待建设”，不作为空链接。
+- 作业和审计等尚未实现菜单明确显示“待建设”，不作为空链接。
 - `.md` 在线查看只展示源文本，不执行用户文件中的 HTML。
 - 知识检索页使用占满剩余视口的独立消息流与底部紧凑输入器；失败只附着在对应消息，可保留原模式原地重试。
+- 智能体配置页继续复用内容卡、按钮、模态框和设计令牌；会话页使用服务端会话列表、独立滚动消息区、底部输入器以及移动端抽屉。
 
 ## 验证
 
@@ -151,11 +177,11 @@ Set-Location ..\backend
 .\mvnw.cmd test
 
 Set-Location ..
-docker compose --env-file .env.example config
-openspec validate --specs --strict
+docker compose --env-file .env.example config --quiet
+openspec validate add-agent-conversations-and-streaming --strict
 ```
 
-后端集成测试使用 Testcontainers 启动真实 MySQL 8，因此运行测试时 Docker 必须可用。
+后端集成测试使用 Testcontainers 启动真实 MySQL 8，因此运行完整测试时 Docker 必须可用。Docker 不可用时只能验证不依赖数据库的单元、MockMvc 和网关测试，不能据此宣称 V5 迁移或端到端会话已经通过。
 
 ## 安全说明
 

@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.ArrayList;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -70,6 +71,35 @@ class GatewayClientTest {
                 json(exchange, 200, "{\"choices\":[{\"message\":{\"content\":\"迟到回答\"}}]}");
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
+            }
+        });
+        server.createContext("/stream/chat/completions", exchange -> {
+            chatAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            sse(exchange,
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"第一段\"}}]}\n\n"
+                            + ": heartbeat\n\n"
+                            + "data: {\"choices\":[{\"delta\":{\"content\":\"与第二段\"}}]}\n\n"
+                            + "data: [DONE]\n\n",
+                    7);
+        });
+        server.createContext("/malformed-stream/chat/completions", exchange ->
+                sse(exchange, "data: {not-json}\n\ndata: [DONE]\n\n", 5));
+        server.createContext("/truncated-stream/chat/completions", exchange ->
+                sse(exchange, "data: {\"choices\":[{\"delta\":{\"content\":\"部分\"}}]}\n\n", 4));
+        server.createContext("/stalled-stream/chat/completions", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream;charset=UTF-8");
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().write(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"部分\"}}]}\n\n"
+                            .getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
+            try {
+                Thread.sleep(250);
+                exchange.getResponseBody().write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
             }
         });
         server.createContext("/collections/test", exchange -> {
@@ -141,6 +171,51 @@ class GatewayClientTest {
     }
 
     @Test
+    void streamsIncrementalUtf8AndRejectsMalformedOrTruncatedSse() {
+        OpenAiChatGateway gateway = chatGateway("/stream");
+        List<String> deltas = new ArrayList<>();
+        try (ChatGateway.ChatStream stream = gateway.openStream(
+                List.of(new ChatMessage("system", "规则"), new ChatMessage("user", "问题")))) {
+            stream.consume(deltas::add);
+        }
+
+        assertThat(deltas).containsExactly("第一段", "与第二段");
+        assertThat(chatAuthorization.get()).isEqualTo("Bearer chat-secret");
+        assertThatThrownBy(() -> {
+            try (ChatGateway.ChatStream stream = chatGateway("/malformed-stream")
+                    .openStream(List.of(new ChatMessage("user", "问题")))) {
+                stream.consume(value -> { });
+            }
+        }).isInstanceOf(DependencyUnavailableException.class)
+                .hasMessage("Chat service is temporarily unavailable");
+        assertThatThrownBy(() -> {
+            try (ChatGateway.ChatStream stream = chatGateway("/truncated-stream")
+                    .openStream(List.of(new ChatMessage("user", "问题")))) {
+                stream.consume(value -> { });
+            }
+        }).isInstanceOf(DependencyUnavailableException.class)
+                .hasMessage("Chat service is temporarily unavailable");
+        assertThatThrownBy(() -> chatGateway("/provider-error")
+                .openStream(List.of(new ChatMessage("user", "不得泄露的问题正文"))))
+                .isInstanceOf(DependencyUnavailableException.class)
+                .hasMessage("Chat service is temporarily unavailable")
+                .hasMessageNotContaining("provider leaked body")
+                .hasMessageNotContaining("chat-secret")
+                .hasMessageNotContaining("不得泄露");
+        assertThatThrownBy(() -> chatGateway("/slow", Duration.ofMillis(50))
+                .openStream(List.of(new ChatMessage("user", "问题"))))
+                .isInstanceOf(DependencyUnavailableException.class)
+                .hasMessage("Chat service is temporarily unavailable");
+        assertThatThrownBy(() -> {
+            try (ChatGateway.ChatStream stream = chatGateway("/stalled-stream", Duration.ofMillis(50))
+                    .openStream(List.of(new ChatMessage("user", "问题")))) {
+                stream.consume(value -> { });
+            }
+        }).isInstanceOf(DependencyUnavailableException.class)
+                .hasMessage("Chat service is temporarily unavailable");
+    }
+
+    @Test
     void qdrantUsesNumberOnlyPayloadAndClassFilter() {
         AppProperties properties = properties();
         QdrantVectorStoreGateway gateway = new QdrantVectorStoreGateway(
@@ -204,6 +279,18 @@ class GatewayClientTest {
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
+        exchange.close();
+    }
+
+    private void sse(HttpExchange exchange, String body, int chunkSize) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream;charset=UTF-8");
+        exchange.sendResponseHeaders(200, 0);
+        for (int offset = 0; offset < bytes.length; offset += chunkSize) {
+            int size = Math.min(chunkSize, bytes.length - offset);
+            exchange.getResponseBody().write(bytes, offset, size);
+            exchange.getResponseBody().flush();
+        }
         exchange.close();
     }
 }

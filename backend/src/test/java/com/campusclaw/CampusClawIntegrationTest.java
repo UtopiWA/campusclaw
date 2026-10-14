@@ -2,38 +2,62 @@ package com.campusclaw;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.campusclaw.persistence.DemoSeedService;
+import com.campusclaw.persistence.AssistantRepository;
+import com.campusclaw.persistence.AssistantSkillRepository;
+import com.campusclaw.persistence.Conversation;
+import com.campusclaw.persistence.ConversationMessage;
+import com.campusclaw.persistence.ConversationMessageRepository;
+import com.campusclaw.persistence.ConversationRepository;
 import com.campusclaw.persistence.KnowledgeEntry;
 import com.campusclaw.persistence.KnowledgeEntryRepository;
 import com.campusclaw.persistence.MaterialRepository;
+import com.campusclaw.persistence.Material;
+import com.campusclaw.persistence.MessageRole;
+import com.campusclaw.persistence.MessageStatus;
+import com.campusclaw.persistence.SkillRepository;
 import com.campusclaw.persistence.UserAccountRepository;
 import com.campusclaw.gateway.EmbeddingGateway;
 import com.campusclaw.gateway.VectorStoreGateway;
 import com.campusclaw.gateway.ChatGateway;
 import com.campusclaw.persistence.KnowledgeChunkRepository;
+import com.campusclaw.persistence.KnowledgeChunk;
 import com.campusclaw.persistence.VectorCleanupJobRepository;
 import com.campusclaw.knowledge.VectorCleanupService;
 import com.campusclaw.material.MaterialService;
 import com.campusclaw.common.DependencyUnavailableException;
+import com.campusclaw.retrieval.RetrievalService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.DriverManager;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -97,6 +121,11 @@ class CampusClawIntegrationTest {
     @Autowired MockMvc mockMvc;
     @Autowired UserAccountRepository users;
     @Autowired MaterialRepository materials;
+    @Autowired AssistantRepository assistants;
+    @Autowired SkillRepository skills;
+    @Autowired AssistantSkillRepository assistantSkills;
+    @Autowired ConversationRepository conversations;
+    @Autowired ConversationMessageRepository conversationMessages;
     @Autowired DemoSeedService seedService;
     @Autowired PasswordEncoder passwordEncoder;
     @SpyBean KnowledgeEntryRepository knowledgeEntries;
@@ -104,7 +133,9 @@ class CampusClawIntegrationTest {
     @Autowired VectorCleanupJobRepository cleanupJobs;
     @Autowired VectorCleanupService vectorCleanup;
     @Autowired MaterialService materialService;
+    @Autowired RetrievalService retrievalService;
     @Autowired JdbcTemplate jdbc;
+    @Autowired ObjectMapper objectMapper;
     @MockBean EmbeddingGateway embeddings;
     @MockBean VectorStoreGateway vectors;
     @MockBean ChatGateway chat;
@@ -117,6 +148,7 @@ class CampusClawIntegrationTest {
             java.util.List<String> values = invocation.getArgument(0);
             return values.stream().map(value -> java.util.List.of(0.1, 0.2, 0.3)).toList();
         });
+        when(vectors.search(any(), any(), anyInt(), anyDouble())).thenReturn(java.util.List.of());
     }
 
     @Test
@@ -129,6 +161,23 @@ class CampusClawIntegrationTest {
                 .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("班级"))));
         mockMvc.perform(get("/api/materials/1/content"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void documentationIsPublicAndDoesNotExposeConfiguredSecrets() throws Exception {
+        mockMvc.perform(get("/swagger-ui/index.html"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML));
+        String apiDocument = mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(apiDocument).doesNotContain(
+                "integration-test-jwt-secret-at-least-32-bytes",
+                "test-chat-key",
+                "test-embedding-key",
+                "jdbc:mysql://");
     }
 
     @Test
@@ -219,6 +268,349 @@ class CampusClawIntegrationTest {
                 .map(String::valueOf).filter(value -> value.contains("CREATE TABLE")).findFirst().orElseThrow();
         assertThat(materialDdl.replace("`", ""))
                 .contains("processing_stage varchar(20)", "failure_code varchar(40)", "retryable tinyint(1)");
+
+        String skillsDdl = jdbc.queryForMap("SHOW CREATE TABLE skills").values().stream()
+                .map(String::valueOf).filter(value -> value.contains("CREATE TABLE")).findFirst().orElseThrow();
+        assertThat(skillsDdl.replace("`", ""))
+                .contains("trigger_text varchar(120)", "source_text text", "uk_skills_class_name")
+                .doesNotContain("assistant_id");
+        String messagesDdl = jdbc.queryForMap("SHOW CREATE TABLE messages").values().stream()
+                .map(String::valueOf).filter(value -> value.contains("CREATE TABLE")).findFirst().orElseThrow();
+        assertThat(messagesDdl.replace("`", ""))
+                .contains("citations_json json", "chk_messages_role", "ON DELETE CASCADE");
+    }
+
+    @Test
+    void migratesExistingV4AssistantAndSkillWithoutChangingIdentity() throws Exception {
+        String database = "agent_upgrade";
+        recreateDatabaseAsContainerRoot(database);
+        String url = MYSQL.getJdbcUrl().replace("/campusclaw", "/" + database);
+        try {
+            Flyway.configure().dataSource(url, MYSQL.getUsername(), MYSQL.getPassword())
+                    .target("4").load().migrate();
+            try (var connection = DriverManager.getConnection(url, MYSQL.getUsername(), MYSQL.getPassword());
+                 var statement = connection.createStatement()) {
+                statement.executeUpdate("INSERT INTO classes (id, name) VALUES (10, '迁移测试班')");
+                statement.executeUpdate("INSERT INTO assistants (id, class_id, name) VALUES (20, 10, '旧助手')");
+                statement.executeUpdate(
+                        "INSERT INTO skills (id, assistant_id, class_id, name) VALUES (30, 20, 10, '旧技能')");
+            }
+
+            Flyway.configure().dataSource(url, MYSQL.getUsername(), MYSQL.getPassword()).load().migrate();
+
+            try (var connection = DriverManager.getConnection(url, MYSQL.getUsername(), MYSQL.getPassword());
+                 var statement = connection.createStatement()) {
+                try (var assistant = statement.executeQuery(
+                        "SELECT id, class_id, name, enabled FROM assistants WHERE id = 20")) {
+                    assertThat(assistant.next()).isTrue();
+                    assertThat(assistant.getLong("class_id")).isEqualTo(10);
+                    assertThat(assistant.getString("name")).isEqualTo("旧助手");
+                    assertThat(assistant.getBoolean("enabled")).isTrue();
+                }
+                try (var binding = statement.executeQuery(
+                        "SELECT assistant_id, skill_id FROM assistant_skills WHERE assistant_id = 20")) {
+                    assertThat(binding.next()).isTrue();
+                    assertThat(binding.getLong("skill_id")).isEqualTo(30);
+                }
+                try (var skill = statement.executeQuery(
+                        "SELECT id, class_id, name, tool_name, source_text FROM skills WHERE id = 30")) {
+                    assertThat(skill.next()).isTrue();
+                    assertThat(skill.getLong("class_id")).isEqualTo(10);
+                    assertThat(skill.getString("name")).isEqualTo("旧技能");
+                    assertThat(skill.getString("tool_name")).isEqualTo("knowledge_search");
+                    assertThat(skill.getString("source_text")).contains("名称：旧技能");
+                }
+            }
+        } finally {
+            dropDatabaseAsContainerRoot(database);
+        }
+    }
+
+    /** 使用容器 root 账户管理临时 schema，业务测试账户仅拥有 campusclaw 库权限。 */
+    private void recreateDatabaseAsContainerRoot(String database) throws Exception {
+        try (var connection = DriverManager.getConnection(
+                MYSQL.getJdbcUrl(), "root", MYSQL.getPassword());
+             var statement = connection.createStatement()) {
+            statement.execute("DROP DATABASE IF EXISTS " + database);
+            statement.execute("CREATE DATABASE " + database
+                    + " CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci");
+            statement.execute("GRANT ALL PRIVILEGES ON " + database + ".* TO 'campusclaw'@'%'");
+        }
+    }
+
+    private void dropDatabaseAsContainerRoot(String database) throws Exception {
+        try (var connection = DriverManager.getConnection(
+                MYSQL.getJdbcUrl(), "root", MYSQL.getPassword());
+             var statement = connection.createStatement()) {
+            statement.execute("DROP DATABASE IF EXISTS " + database);
+        }
+    }
+
+    @Test
+    void managesClassScopedAgentConfigurationAtomically() throws Exception {
+        String teacher = login("teacher-a");
+        String studentA = login("student-a1");
+        long classA = users.findByUsername("teacher-a").orElseThrow().getClassId();
+        long classB = users.findByUsername("student-b1").orElseThrow().getClassId();
+        long materialA = materials.findAllByClassIdOrderByCreatedAtDesc(classA).get(0).getId();
+        long materialB = materials.findAllByClassIdOrderByCreatedAtDesc(classB).get(0).getId();
+        long skillB = skills.findFirstByClassIdAndName(classB, "材料整理").orElseThrow().getId();
+
+        mockMvc.perform(get("/api/assistants"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/skills").with(bearer(studentA))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("sourceText", validSkillSource("学生写入")))))
+                .andExpect(status().isForbidden());
+
+        String source = validSkillSource("阶段测试技能");
+        MvcResult skillResult = mockMvc.perform(post("/api/skills").with(bearer(teacher))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("sourceText", source))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("阶段测试技能"))
+                .andExpect(jsonPath("$.toolName").value("knowledge_search"))
+                .andExpect(jsonPath("$.sourceText").value(source))
+                .andReturn();
+        long skillId = ((Number) com.jayway.jsonpath.JsonPath.read(
+                skillResult.getResponse().getContentAsString(StandardCharsets.UTF_8), "$.id")).longValue();
+
+        mockMvc.perform(put("/api/skills/{id}", skillId).with(bearer(teacher))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "sourceText", "名称：损坏\n名称：重复\n适用条件：测试\n启用：是\n\n说明"))))
+                .andExpect(status().isBadRequest());
+        assertThat(skills.findById(skillId).orElseThrow().getSourceText()).isEqualTo(source);
+        mockMvc.perform(put("/api/skills/{id}", skillB).with(bearer(teacher))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("sourceText", validSkillSource("越界")))))
+                .andExpect(status().isNotFound());
+
+        String assistantPayload = objectMapper.writeValueAsString(Map.of(
+                "name", "阶段测试助手",
+                "promptText", "只根据教学场景提供提示。",
+                "enabled", true,
+                "skillIds", java.util.List.of(skillId, skillId),
+                "materialIds", java.util.List.of(materialA, materialA)));
+        MvcResult assistantResult = mockMvc.perform(post("/api/assistants").with(bearer(teacher))
+                        .contentType(MediaType.APPLICATION_JSON).content(assistantPayload))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.skillIds.length()").value(1))
+                .andExpect(jsonPath("$.materialIds.length()").value(1))
+                .andReturn();
+        long assistantId = ((Number) com.jayway.jsonpath.JsonPath.read(
+                assistantResult.getResponse().getContentAsString(StandardCharsets.UTF_8), "$.id")).longValue();
+
+        mockMvc.perform(get("/api/assistants/{id}", assistantId).with(bearer(studentA)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("阶段测试助手"))
+                .andExpect(jsonPath("$.promptText").doesNotExist())
+                .andExpect(jsonPath("$.skillIds").doesNotExist())
+                .andExpect(jsonPath("$.materialIds").doesNotExist());
+        mockMvc.perform(put("/api/assistants/{id}", assistantId).with(bearer(studentA))
+                        .contentType(MediaType.APPLICATION_JSON).content(assistantPayload))
+                .andExpect(status().isForbidden());
+
+        String invalidBinding = objectMapper.writeValueAsString(Map.of(
+                "name", "不应保存的新名称",
+                "promptText", "不应保存",
+                "enabled", false,
+                "skillIds", java.util.List.of(skillId),
+                "materialIds", java.util.List.of(materialB)));
+        mockMvc.perform(put("/api/assistants/{id}", assistantId).with(bearer(teacher))
+                        .contentType(MediaType.APPLICATION_JSON).content(invalidBinding))
+                .andExpect(status().isNotFound());
+        assertThat(assistants.findById(assistantId).orElseThrow().getName()).isEqualTo("阶段测试助手");
+        assertThat(assistantSkills.findAllByAssistantId(assistantId))
+                .extracting(link -> link.getSkillId()).containsExactly(skillId);
+
+        String disabledPayload = objectMapper.writeValueAsString(Map.of(
+                "name", "阶段测试助手",
+                "promptText", "",
+                "enabled", false,
+                "skillIds", java.util.List.of(skillId),
+                "materialIds", java.util.List.of(materialA)));
+        mockMvc.perform(put("/api/assistants/{id}", assistantId).with(bearer(teacher))
+                        .contentType(MediaType.APPLICATION_JSON).content(disabledPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(false));
+        mockMvc.perform(get("/api/assistants/{id}", assistantId).with(bearer(studentA)))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(delete("/api/skills/{id}", skillId).with(bearer(teacher)))
+                .andExpect(status().isNoContent());
+        assertThat(skills.findById(skillId)).isEmpty();
+        assertThat(assistantSkills.findAllByAssistantId(assistantId)).isEmpty();
+        assertThat(assistants.findById(assistantId)).isPresent();
+    }
+
+    @Test
+    void seedRemainsIdempotentAndConversationDeleteOnlyCascadesMessages() {
+        long classA = users.findByUsername("teacher-a").orElseThrow().getClassId();
+        var teacher = users.findByUsername("teacher-a").orElseThrow();
+        var assistant = assistants.findFirstByClassIdAndName(classA, "A 班教研助手").orElseThrow();
+        assistant.update(assistant.getName(), "教师已经修改的提示词", true);
+        assistants.saveAndFlush(assistant);
+        long assistantCount = assistants.count();
+        long skillCount = skills.count();
+        long bindingCount = assistantSkills.count();
+
+        seedService.seed(DEMO_PASSWORD);
+        seedService.seed(DEMO_PASSWORD);
+
+        assertThat(assistants.count()).isEqualTo(assistantCount);
+        assertThat(skills.count()).isEqualTo(skillCount);
+        assertThat(assistantSkills.count()).isEqualTo(bindingCount);
+        assertThat(assistants.findById(assistant.getId()).orElseThrow().getPromptText())
+                .isEqualTo("教师已经修改的提示词");
+
+        long materialCount = materials.count();
+        Conversation conversation = conversations.saveAndFlush(
+                new Conversation(classA, teacher.getId(), assistant.getId(), "新的提问"));
+        conversationMessages.saveAndFlush(new ConversationMessage(
+                conversation.getId(), MessageRole.USER, "测试消息", null, "[]", MessageStatus.COMPLETED));
+        conversations.delete(conversation);
+        conversations.flush();
+
+        assertThat(conversationMessages.findAllByConversationIdOrderByIdAsc(conversation.getId())).isEmpty();
+        assertThat(materials.count()).isEqualTo(materialCount);
+        assertThat(skills.count()).isEqualTo(skillCount);
+    }
+
+    @Test
+    void createsPrivateConversationAndKeepsItUsableAfterAssistantIsDisabled() throws Exception {
+        String studentA = login("student-a1");
+        String teacherA = login("teacher-a");
+        String studentB = login("student-b1");
+        long classA = users.findByUsername("student-a1").orElseThrow().getClassId();
+        long classB = users.findByUsername("student-b1").orElseThrow().getClassId();
+        var assistantA = assistants.findFirstByClassIdAndName(classA, "A 班教研助手").orElseThrow();
+        var assistantB = assistants.findFirstByClassIdAndName(classB, "B 班教研助手").orElseThrow();
+        Long conversationId = null;
+
+        try {
+            mockMvc.perform(post("/api/conversations").with(bearer(studentA))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "assistantId", assistantA.getId(), "userId", 999, "classId", 999))))
+                    .andExpect(status().isBadRequest());
+            mockMvc.perform(post("/api/conversations").with(bearer(studentA))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of("assistantId", assistantB.getId()))))
+                    .andExpect(status().isNotFound());
+
+            MvcResult created = mockMvc.perform(post("/api/conversations").with(bearer(studentA))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of("assistantId", assistantA.getId()))))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.title").value("新的提问"))
+                    .andExpect(jsonPath("$.assistantId").value(assistantA.getId()))
+                    .andReturn();
+            conversationId = ((Number) com.jayway.jsonpath.JsonPath.read(
+                    created.getResponse().getContentAsString(StandardCharsets.UTF_8), "$.id")).longValue();
+
+            mockMvc.perform(get("/api/conversations/{id}", conversationId).with(bearer(teacherA)))
+                    .andExpect(status().isNotFound());
+            mockMvc.perform(get("/api/conversations/{id}", conversationId).with(bearer(studentB)))
+                    .andExpect(status().isNotFound());
+
+            assistantA.update(assistantA.getName(), assistantA.getPromptText(), false);
+            assistants.saveAndFlush(assistantA);
+            mockMvc.perform(get("/api/conversations/{id}", conversationId).with(bearer(studentA)))
+                    .andExpect(status().isOk());
+            mockMvc.perform(post("/api/conversations").with(bearer(studentA))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of("assistantId", assistantA.getId()))))
+                    .andExpect(status().isNotFound());
+
+            ChatGateway.ChatStream stream = mock(ChatGateway.ChatStream.class);
+            doAnswer(invocation -> {
+                java.util.function.Consumer<String> consumer = invocation.getArgument(0);
+                consumer.accept("集成回答");
+                return null;
+            }).when(stream).consume(any());
+            when(chat.openStream(any())).thenReturn(stream);
+            MvcResult pending = mockMvc.perform(post("/api/conversations/{id}/messages", conversationId)
+                            .with(bearer(studentA))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of("content", "继续提问"))))
+                    .andExpect(status().isOk())
+                    .andExpect(request().asyncStarted())
+                    .andReturn();
+            mockMvc.perform(asyncDispatch(pending))
+                    .andExpect(status().isOk())
+                    .andExpect(content().string(org.hamcrest.Matchers.containsString("event: done")));
+            assertThat(conversationMessages.findAllByConversationIdOrderByIdAsc(conversationId))
+                    .extracting(ConversationMessage::getContent)
+                    .containsExactly("继续提问", "集成回答");
+        } finally {
+            assistantA.update(assistantA.getName(), assistantA.getPromptText(), true);
+            assistants.saveAndFlush(assistantA);
+            if (conversationId != null) {
+                conversations.deleteById(conversationId);
+                conversations.flush();
+            }
+        }
+    }
+
+    @Test
+    void boundRetrievalRejectsUnboundCrossClassAndNonReadyCandidatesAtEveryBackfill() {
+        var uploaderA = users.findByUsername("teacher-a").orElseThrow();
+        var uploaderB = users.findByUsername("student-b1").orElseThrow();
+        java.util.List<Long> materialIds = new java.util.ArrayList<>();
+
+        try {
+            Material allowed = saveMaterial(uploaderA.getClassId(), uploaderA.getId(), "允许材料", true);
+            Material unbound = saveMaterial(uploaderA.getClassId(), uploaderA.getId(), "未绑定材料", true);
+            Material crossClass = saveMaterial(uploaderB.getClassId(), uploaderB.getId(), "跨班材料", true);
+            Material nonReady = saveMaterial(uploaderA.getClassId(), uploaderA.getId(), "未就绪材料", false);
+            materialIds.addAll(java.util.List.of(
+                    allowed.getId(), unbound.getId(), crossClass.getId(), nonReady.getId()));
+
+            KnowledgeChunk allowedChunk = saveReadyChunk(allowed, "限定检索允许正文");
+            KnowledgeChunk unboundChunk = saveReadyChunk(unbound, "限定检索高相关未绑定正文");
+            KnowledgeChunk crossClassChunk = saveReadyChunk(crossClass, "限定检索跨班正文");
+            KnowledgeChunk nonReadyChunk = saveReadyChunk(nonReady, "限定检索未就绪正文");
+            when(vectors.search(any(), any(), anyInt(), anyDouble())).thenReturn(java.util.List.of(
+                    new VectorStoreGateway.VectorMatch(unboundChunk.getId(), 0.99),
+                    new VectorStoreGateway.VectorMatch(crossClassChunk.getId(), 0.98),
+                    new VectorStoreGateway.VectorMatch(nonReadyChunk.getId(), 0.97),
+                    new VectorStoreGateway.VectorMatch(allowedChunk.getId(), 0.50)));
+
+            assertThat(retrievalService.searchBound(
+                    "限定检索", uploaderA.getClassId(), java.util.Set.of(), 4).hits()).isEmpty();
+            var response = retrievalService.searchBound(
+                    "限定检索", uploaderA.getClassId(), java.util.Set.of(allowed.getId()), 4);
+            assertThat(response.hits())
+                    .extracting(hit -> hit.materialId())
+                    .containsExactly(allowed.getId());
+        } finally {
+            retrievalChunks.deleteAll(retrievalChunks.findAll().stream()
+                    .filter(chunk -> materialIds.contains(chunk.getMaterialId())).toList());
+            knowledgeEntries.deleteAll(knowledgeEntries.findAll().stream()
+                    .filter(entry -> materialIds.contains(entry.getMaterialId())).toList());
+            materials.deleteAllById(materialIds);
+            materials.flush();
+        }
+    }
+
+    /** 为限定检索集成测试创建指定状态的材料。 */
+    private Material saveMaterial(Long classId, Long uploaderId, String title, boolean ready) {
+        Material material = new Material(classId, title, null, null, uploaderId);
+        if (ready) {
+            material.markReady();
+        }
+        return materials.saveAndFlush(material);
+    }
+
+    private KnowledgeChunk saveReadyChunk(Material material, String text) {
+        KnowledgeEntry entry = knowledgeEntries.saveAndFlush(
+                new KnowledgeEntry(material.getId(), material.getClassId(), 0, text));
+        KnowledgeChunk chunk = new KnowledgeChunk(
+                material.getId(), entry.getId(), material.getClassId(), 0,
+                text, 0, text.codePointCount(0, text.length()));
+        chunk.markReady();
+        return retrievalChunks.saveAndFlush(chunk);
     }
 
     @Test
@@ -595,6 +987,11 @@ class CampusClawIntegrationTest {
             request.addHeader("Authorization", "Bearer " + token);
             return request;
         };
+    }
+
+    private String validSkillSource(String name) {
+        return "名称：" + name + "\n适用条件：材料,归纳\n资料：\n工具：knowledge_search\n启用：是\n\n"
+                + "根据问题整理已绑定的教学材料。";
     }
 
     private long regularFileCount(Path root) throws Exception {

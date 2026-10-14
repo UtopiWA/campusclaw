@@ -16,6 +16,9 @@ public interface KnowledgeChunkRepository extends JpaRepository<KnowledgeChunk, 
 
     List<KnowledgeChunk> findAllByIdInAndClassIdAndIndexStatus(Collection<Long> ids, Long classId, IndexStatus status);
 
+    List<KnowledgeChunk> findAllByIdInAndClassIdAndIndexStatusAndMaterialIdIn(
+            Collection<Long> ids, Long classId, IndexStatus status, Collection<Long> materialIds);
+
     @Query(value = """
             SELECT kc.id AS id,
                    MATCH(kc.chunk_text) AGAINST (:query IN NATURAL LANGUAGE MODE) AS keywordScore
@@ -31,6 +34,25 @@ public interface KnowledgeChunkRepository extends JpaRepository<KnowledgeChunk, 
     List<KeywordHitProjection> searchReady(@Param("classId") Long classId,
                                            @Param("query") String query,
                                            @Param("limit") int limit);
+
+    @Query(value = """
+            SELECT kc.id AS id,
+                   MATCH(kc.chunk_text) AGAINST (:query IN NATURAL LANGUAGE MODE) AS keywordScore
+            FROM knowledge_chunks kc
+            JOIN materials m ON m.id = kc.material_id
+            WHERE kc.class_id = :classId
+              AND kc.material_id IN (:materialIds)
+              AND kc.index_status = 'READY'
+              AND m.class_id = :classId
+              AND m.index_status = 'READY'
+              AND MATCH(kc.chunk_text) AGAINST (:query IN NATURAL LANGUAGE MODE)
+            ORDER BY MATCH(kc.chunk_text) AGAINST (:query IN NATURAL LANGUAGE MODE) DESC, kc.id ASC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<KeywordHitProjection> searchReadyWithinMaterials(@Param("classId") Long classId,
+                                                          @Param("materialIds") Collection<Long> materialIds,
+                                                          @Param("query") String query,
+                                                          @Param("limit") int limit);
 
     @Modifying
     void deleteAllByMaterialId(Long materialId);

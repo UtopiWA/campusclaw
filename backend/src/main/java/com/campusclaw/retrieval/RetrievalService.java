@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
@@ -44,21 +45,39 @@ public class RetrievalService {
 
     @Transactional(readOnly = true)
     public SearchResponse search(SearchRequest request, Long sessionClassId) {
+        return search(request, sessionClassId, null);
+    }
+
+    /** 智能体链路使用服务端材料白名单；空集合明确表示没有可检索依据。 */
+    @Transactional(readOnly = true)
+    public SearchResponse searchBound(String query, Long sessionClassId, Set<Long> allowedMaterialIds, int limit) {
+        return search(new SearchRequest(query, SearchMode.HYBRID, limit, null),
+                sessionClassId, Set.copyOf(allowedMaterialIds));
+    }
+
+    private SearchResponse search(SearchRequest request, Long sessionClassId, Set<Long> allowedMaterialIds) {
         String query = validateQuery(request.query());
         int limit = request.limit() == null ? properties.defaultLimit() : request.limit();
         if (limit < 1 || limit > properties.maxLimit()) {
             throw new BadRequestException("Limit must be between 1 and " + properties.maxLimit());
         }
         SearchMode mode = request.mode() == null ? SearchMode.HYBRID : request.mode();
+        if (allowedMaterialIds != null && allowedMaterialIds.isEmpty()) {
+            return new SearchResponse(mode, NO_EVIDENCE, List.of());
+        }
 
-        List<ScoredId> keyword = mode == SearchMode.VECTOR ? List.of() : keyword(query, sessionClassId, limit * 3);
-        List<ScoredId> vector = mode == SearchMode.KEYWORD ? List.of() : vector(query, sessionClassId, limit * 3);
+        List<ScoredId> keyword = mode == SearchMode.VECTOR ? List.of()
+                : keyword(query, sessionClassId, allowedMaterialIds, limit * 3);
+        List<ScoredId> vector = mode == SearchMode.KEYWORD ? List.of()
+                : vector(query, sessionClassId, allowedMaterialIds, limit * 3);
         List<RankedId> ranked = rank(mode, keyword, vector).stream().limit(limit).toList();
-        Map<Long, KnowledgeChunk> ready = loadReady(ranked.stream().map(RankedId::id).toList(), sessionClassId);
+        Map<Long, KnowledgeChunk> ready = loadReady(
+                ranked.stream().map(RankedId::id).toList(), sessionClassId, allowedMaterialIds);
         Map<Long, Material> materialMap = materials.findAllById(ready.values().stream()
                         .map(KnowledgeChunk::getMaterialId).collect(Collectors.toSet())).stream()
                 .filter(material -> material.getClassId().equals(sessionClassId)
-                        && material.getIndexStatus() == IndexStatus.READY)
+                        && material.getIndexStatus() == IndexStatus.READY
+                        && (allowedMaterialIds == null || allowedMaterialIds.contains(material.getId())))
                 .collect(Collectors.toMap(Material::getId, Function.identity()));
 
         List<RetrievalHit> hits = new ArrayList<>();
@@ -77,16 +96,19 @@ public class RetrievalService {
         return new SearchResponse(mode, hits.isEmpty() ? NO_EVIDENCE : null, List.copyOf(hits));
     }
 
-    private List<ScoredId> keyword(String query, Long classId, int limit) {
+    private List<ScoredId> keyword(String query, Long classId, Set<Long> allowedMaterialIds, int limit) {
         List<ScoredId> result = new ArrayList<>();
         int rank = 1;
-        for (KnowledgeChunkRepository.KeywordHitProjection hit : chunks.searchReady(classId, query, limit)) {
+        List<KnowledgeChunkRepository.KeywordHitProjection> candidates = allowedMaterialIds == null
+                ? chunks.searchReady(classId, query, limit)
+                : chunks.searchReadyWithinMaterials(classId, allowedMaterialIds, query, limit);
+        for (KnowledgeChunkRepository.KeywordHitProjection hit : candidates) {
             result.add(new ScoredId(hit.getId(), hit.getKeywordScore(), rank++));
         }
         return result;
     }
 
-    private List<ScoredId> vector(String query, Long classId, int limit) {
+    private List<ScoredId> vector(String query, Long classId, Set<Long> allowedMaterialIds, int limit) {
         List<Double> queryVector = embeddings.embed(List.of(query)).get(0);
         List<ScoredId> result = new ArrayList<>();
         int rank = 1;
@@ -95,7 +117,8 @@ public class RetrievalService {
             result.add(new ScoredId(match.chunkId(), match.score(), rank++));
         }
         // 此回表在组装结果前再次执行；伪造 payload、跨班和非 READY point 均无法形成命中。
-        Map<Long, KnowledgeChunk> ready = loadReady(result.stream().map(ScoredId::id).toList(), classId);
+        Map<Long, KnowledgeChunk> ready = loadReady(
+                result.stream().map(ScoredId::id).toList(), classId, allowedMaterialIds);
         return result.stream().filter(item -> ready.containsKey(item.id())).toList();
     }
 
@@ -127,10 +150,19 @@ public class RetrievalService {
     }
 
     private Map<Long, KnowledgeChunk> loadReady(Collection<Long> ids, Long classId) {
+        return loadReady(ids, classId, null);
+    }
+
+    private Map<Long, KnowledgeChunk> loadReady(
+            Collection<Long> ids, Long classId, Set<Long> allowedMaterialIds) {
         if (ids.isEmpty()) {
             return Map.of();
         }
-        return chunks.findAllByIdInAndClassIdAndIndexStatus(ids, classId, IndexStatus.READY).stream()
+        List<KnowledgeChunk> rows = allowedMaterialIds == null
+                ? chunks.findAllByIdInAndClassIdAndIndexStatus(ids, classId, IndexStatus.READY)
+                : chunks.findAllByIdInAndClassIdAndIndexStatusAndMaterialIdIn(
+                        ids, classId, IndexStatus.READY, allowedMaterialIds);
+        return rows.stream()
                 .collect(Collectors.toMap(KnowledgeChunk::getId, Function.identity()));
     }
 

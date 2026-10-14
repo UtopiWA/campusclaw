@@ -24,4 +24,16 @@ describe('authGuard', () => {
     const result = await authGuard({ path: '/search', fullPath: '/search', meta: { requiresAuth: true } })
     expect(result).toBe(true)
   })
+
+  it('allows only teachers to enter assistant configuration', async () => {
+    authState.user = { id: 1, role: 'student' }
+    await expect(authGuard({ path: '/assistants', fullPath: '/assistants', meta: {
+      requiresAuth: true, role: 'teacher',
+    } })).resolves.toBe('/conversations')
+
+    authState.user = { id: 2, role: 'teacher' }
+    await expect(authGuard({ path: '/assistants', fullPath: '/assistants', meta: {
+      requiresAuth: true, role: 'teacher',
+    } })).resolves.toBe(true)
+  })
 })

@@ -23,9 +23,9 @@ export function clearAccessToken() {
   }
 }
 
-export async function apiRequest(path, options = {}) {
-  // 统一附加 Bearer 令牌并处理各类响应，登录等公开请求可通过 anonymous 跳过令牌。
-  const { responseType = 'json', anonymous = false, ...requestOptions } = options
+/** 发起统一认证请求；流式接口可直接消费返回的 Response。 */
+export async function apiFetch(path, options = {}) {
+  const { anonymous = false, ...requestOptions } = options
   const method = (requestOptions.method || 'GET').toUpperCase()
   const headers = new Headers(requestOptions.headers || {})
   const token = anonymous ? null : getAccessToken()
@@ -49,9 +49,21 @@ export async function apiRequest(path, options = {}) {
       window.dispatchEvent(new CustomEvent('campusclaw:unauthorized'))
     }
   }
+  return response
+}
+
+/** 从失败响应提取稳定、可展示的服务端错误。 */
+export async function readApiError(response) {
+  const body = await response.json().catch(() => ({}))
+  return new ApiError(response.status, body.error || `请求失败（${response.status}）`)
+}
+
+export async function apiRequest(path, options = {}) {
+  // 统一附加 Bearer 令牌并处理各类响应，登录等公开请求可通过 anonymous 跳过令牌。
+  const { responseType = 'json', ...requestOptions } = options
+  const response = await apiFetch(path, requestOptions)
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new ApiError(response.status, body.error || `请求失败（${response.status}）`)
+    throw await readApiError(response)
   }
   if (response.status === 204) {
     return null

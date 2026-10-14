@@ -20,6 +20,7 @@ import com.campusclaw.persistence.Material;
 import com.campusclaw.persistence.MaterialRepository;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class RetrievalServiceTest {
@@ -87,6 +88,47 @@ class RetrievalServiceTest {
             assertThat(hit.keywordScore()).isEqualTo(9.5);
             assertThat(hit.vectorScore()).isEqualTo(0.8);
         });
+    }
+
+    @Test
+    void boundSearchShortCircuitsEmptyWhitelistWithoutLookingAtClassMaterials() {
+        SearchResponse response = service.searchBound("任意问题", 1L, Set.of(), 4);
+
+        assertThat(response.hits()).isEmpty();
+        assertThat(response.message()).isEqualTo(RetrievalService.NO_EVIDENCE);
+        verifyNoInteractions(chunks, materials, embeddings, vectors);
+    }
+
+    @Test
+    void boundSearchFiltersKeywordQueryAndVectorBackfillByAllowedMaterials() {
+        KnowledgeChunk allowed = readyChunk(1L, 1L, 8L);
+        when(chunks.findAllByIdInAndClassIdAndIndexStatusAndMaterialIdIn(
+                any(), eq(1L), eq(IndexStatus.READY), eq(Set.of(8L))))
+                .thenReturn(List.of(allowed));
+        KnowledgeChunkRepository.KeywordHitProjection keyword = mock(
+                KnowledgeChunkRepository.KeywordHitProjection.class);
+        when(keyword.getId()).thenReturn(1L);
+        when(keyword.getKeywordScore()).thenReturn(5.0);
+        when(chunks.searchReadyWithinMaterials(1L, Set.of(8L), "课堂问题", 12))
+                .thenReturn(List.of(keyword));
+        when(embeddings.embed(List.of("课堂问题"))).thenReturn(List.of(List.of(0.1, 0.2, 0.3)));
+        when(vectors.search(List.of(0.1, 0.2, 0.3), 1L, 12, 0.35)).thenReturn(List.of(
+                new VectorStoreGateway.VectorMatch(2L, 0.95),
+                new VectorStoreGateway.VectorMatch(1L, 0.8)));
+        Material material = mock(Material.class);
+        when(material.getId()).thenReturn(8L);
+        when(material.getClassId()).thenReturn(1L);
+        when(material.getIndexStatus()).thenReturn(IndexStatus.READY);
+        when(material.getTitle()).thenReturn("允许材料");
+        when(materials.findAllById(any())).thenReturn(List.of(material));
+
+        SearchResponse response = service.searchBound("课堂问题", 1L, Set.of(8L), 4);
+
+        assertThat(response.hits()).extracting(RetrievalHit::chunkId).containsExactly(1L);
+        verify(chunks).searchReadyWithinMaterials(1L, Set.of(8L), "课堂问题", 12);
+        verify(chunks, org.mockito.Mockito.atLeastOnce())
+                .findAllByIdInAndClassIdAndIndexStatusAndMaterialIdIn(
+                        any(), eq(1L), eq(IndexStatus.READY), eq(Set.of(8L)));
     }
 
     private KnowledgeChunk readyChunk(Long id, Long classId, Long materialId) {

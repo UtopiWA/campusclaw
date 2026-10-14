@@ -2,6 +2,7 @@ package com.campusclaw.persistence;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Collection;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -11,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 public interface MaterialRepository extends JpaRepository<Material, Long> {
     List<Material> findAllByClassIdOrderByCreatedAtDesc(Long classId);
     Optional<Material> findByIdAndClassId(Long id, Long classId);
+    List<Material> findAllByIdInAndClassId(Collection<Long> ids, Long classId);
     Optional<Material> findFirstByClassIdAndTitleAndStoredPathIsNull(Long classId, String title);
     List<Material> findTop20ByIndexStatusAndUpdatedAtBeforeOrderByUpdatedAtAsc(
             IndexStatus status, Instant updatedBefore);
