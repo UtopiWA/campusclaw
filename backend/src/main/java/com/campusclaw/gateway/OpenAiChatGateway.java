@@ -13,6 +13,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -33,6 +34,7 @@ public class OpenAiChatGateway implements ChatGateway {
     private final String model;
     private final String streamUrl;
     private final String apiKey;
+    private final String reasoningEffort;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final java.time.Duration readTimeout;
@@ -48,6 +50,7 @@ public class OpenAiChatGateway implements ChatGateway {
         this.client = requests.create(properties.chat().baseUrl(), properties.chat().apiKey());
         this.streamUrl = stripTrailingSlash(properties.chat().baseUrl()) + "/chat/completions";
         this.apiKey = properties.chat().apiKey();
+        this.reasoningEffort = properties.chat().reasoningEffort();
         this.objectMapper = objectMapper;
         this.readTimeout = properties.retrieval().readTimeout();
         this.httpClient = HttpClient.newBuilder()
@@ -57,12 +60,9 @@ public class OpenAiChatGateway implements ChatGateway {
 
     @Override
     public String complete(List<ChatMessage> messages) {
-        List<Map<String, String>> bodyMessages = messages.stream()
-                .map(message -> Map.of("role", message.role(), "content", message.content()))
-                .toList();
         JsonNode response = requests.withOneRetry("Chat service", () -> client.post()
                 .uri("/chat/completions")
-                .body(Map.of("model", model, "stream", false, "messages", bodyMessages))
+                .body(requestBody(messages, false))
                 .retrieve()
                 .body(JsonNode.class));
         String answer = response == null ? "" : response.path("choices").path(0)
@@ -76,12 +76,7 @@ public class OpenAiChatGateway implements ChatGateway {
     @Override
     public ChatStream openStream(List<ChatMessage> messages) {
         try {
-            String body = objectMapper.writeValueAsString(Map.of(
-                    "model", model,
-                    "stream", true,
-                    "messages", messages.stream()
-                            .map(message -> Map.of("role", message.role(), "content", message.content()))
-                            .toList()));
+            String body = objectMapper.writeValueAsString(requestBody(messages, true));
             HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(streamUrl))
                     .timeout(readTimeout)
                     .header("Content-Type", "application/json")
@@ -126,6 +121,20 @@ public class OpenAiChatGateway implements ChatGateway {
 
     private String stripTrailingSlash(String value) {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+    }
+
+    /** 统一构造同步和流式请求；兼容服务支持时可关闭耗时且不会展示的推理阶段。 */
+    private Map<String, Object> requestBody(List<ChatMessage> messages, boolean stream) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", model);
+        body.put("stream", stream);
+        body.put("messages", messages.stream()
+                .map(message -> Map.of("role", message.role(), "content", message.content()))
+                .toList());
+        if (reasoningEffort != null && !reasoningEffort.isBlank()) {
+            body.put("reasoning_effort", reasoningEffort);
+        }
+        return body;
     }
 
     /** 在调用线程中消费供应商 SSE，任何畸形或非正常结束都映射为脱敏依赖故障。 */

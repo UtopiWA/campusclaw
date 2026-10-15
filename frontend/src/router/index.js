@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import LoginView from '../views/LoginView.vue'
 import MaterialsView from '../views/MaterialsView.vue'
-import SearchView from '../views/SearchView.vue'
 import AgentConfigView from '../views/AgentConfigView.vue'
 import ConversationsView from '../views/ConversationsView.vue'
 import { authState, loadCurrentUser } from '../services/auth.js'
@@ -12,7 +11,7 @@ const router = createRouter({
     { path: '/', redirect: '/materials' },
     { path: '/login', component: LoginView },
     { path: '/materials', component: MaterialsView, meta: { requiresAuth: true } },
-    { path: '/search', component: SearchView, meta: { requiresAuth: true } },
+    { path: '/search', redirect: '/materials' },
     { path: '/assistants', component: AgentConfigView, meta: { requiresAuth: true, role: 'teacher' } },
     { path: '/conversations/:id?', component: ConversationsView, meta: { requiresAuth: true } },
     { path: '/:pathMatch(.*)*', redirect: '/materials' },

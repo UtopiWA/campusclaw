@@ -30,6 +30,7 @@ class GatewayClientTest {
     private final AtomicReference<String> vectorRequest = new AtomicReference<>();
     private final AtomicReference<String> embeddingAuthorization = new AtomicReference<>();
     private final AtomicReference<String> chatAuthorization = new AtomicReference<>();
+    private final AtomicReference<String> chatRequest = new AtomicReference<>();
     private final AtomicInteger providerErrorCalls = new AtomicInteger();
 
     @BeforeEach
@@ -43,6 +44,7 @@ class GatewayClientTest {
         });
         server.createContext("/v1/chat/completions", exchange -> {
             chatAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            chatRequest.set(readBody(exchange));
             json(exchange, 200, "{\"choices\":[{\"message\":{\"content\":\"依据回答 [1]\"}}]}");
         });
         server.createContext("/provider-error/embeddings", exchange -> {
@@ -75,6 +77,7 @@ class GatewayClientTest {
         });
         server.createContext("/stream/chat/completions", exchange -> {
             chatAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            chatRequest.set(readBody(exchange));
             sse(exchange,
                     "data: {\"choices\":[{\"delta\":{\"content\":\"第一段\"}}]}\n\n"
                             + ": heartbeat\n\n"
@@ -136,6 +139,7 @@ class GatewayClientTest {
                 List.of(new ChatMessage("system", "服务端规则"), new ChatMessage("user", "问题"))))
                 .isEqualTo("依据回答 [1]");
         assertThat(chatAuthorization.get()).isEqualTo("Bearer chat-secret");
+        assertThat(chatRequest.get()).contains("\"reasoning_effort\":\"none\"", "\"stream\":false");
     }
 
     @Test
@@ -181,6 +185,7 @@ class GatewayClientTest {
 
         assertThat(deltas).containsExactly("第一段", "与第二段");
         assertThat(chatAuthorization.get()).isEqualTo("Bearer chat-secret");
+        assertThat(chatRequest.get()).contains("\"reasoning_effort\":\"none\"", "\"stream\":true");
         assertThatThrownBy(() -> {
             try (ChatGateway.ChatStream stream = chatGateway("/malformed-stream")
                     .openStream(List.of(new ChatMessage("user", "问题")))) {
@@ -241,7 +246,7 @@ class GatewayClientTest {
         return new AppProperties("./uploads", 1024, new AppProperties.DemoSeed(false, ""),
                 new AppProperties.Qdrant(baseUrl, "test"),
                 new AppProperties.Embedding(embeddingBaseUrl, "embedding-secret", "embed", 3),
-                new AppProperties.Chat(chatBaseUrl, "chat-secret", "chat"),
+                new AppProperties.Chat(chatBaseUrl, "chat-secret", "chat", "none"),
                 new AppProperties.Retrieval(Duration.ofSeconds(1), readTimeout,
                         1000, 10, 20, 0.35, 60, false));
     }

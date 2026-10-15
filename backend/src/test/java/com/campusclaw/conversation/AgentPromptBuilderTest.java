@@ -33,7 +33,8 @@ class AgentPromptBuilderTest {
         assertThat(plan.messages()).hasSize(3);
         assertThat(plan.messages().get(0).role()).isEqualTo("system");
         assertThat(plan.messages().get(0).content())
-                .contains("硬性限制", "不可信数据")
+                .contains("硬性限制", "苏格拉底式引导", "至多一步", "不得输出最终答案", "不可信数据",
+                        "每个根据资料得出的事实后都必须紧跟至少一个存在的 [n]")
                 .doesNotContain("<script>不可执行</script> 方程依据");
         assertThat(plan.messages().get(2).content())
                 .contains("[1] 材料标题：初中数学", "<script>不可执行</script>")

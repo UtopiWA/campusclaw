@@ -1,12 +1,14 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '../components/AppIcon.vue'
 import AppShell from '../components/AppShell.vue'
+import BaseModal from '../components/BaseModal.vue'
 import { listAssistants } from '../services/agents.js'
 import {
-  createConversation, getConversation, listConversations, streamConversationMessage,
+  createConversation, deleteConversation, getConversation, listConversations, streamConversationMessage,
 } from '../services/conversations.js'
+import { createStreamTextRenderer } from '../utils/streamTextRenderer.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -21,6 +23,9 @@ const error = ref('')
 const thread = ref(null)
 const drawerOpen = ref(false)
 const listCollapsed = ref(false)
+const conversationDeleteTarget = ref(null)
+const conversationDeleteError = ref('')
+const deletingConversation = ref(false)
 
 const currentId = computed(() => route.params.id ? Number(route.params.id) : null)
 const availableAssistants = computed(() => assistants.value.filter((item) => item.enabled !== false))
@@ -95,20 +100,56 @@ async function scrollLatest(smooth = true) {
   thread.value?.scrollTo?.({ top: thread.value.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
 }
 
-function streamMessage(event, assistantMessage) {
+function streamMessage(event, assistantMessage, renderer, streamState) {
   // delta 只追加服务端声明的新增文本；完成 ID 由已提交的数据库消息提供。
   if (event.event === 'meta') {
     assistantMessage.skillName = event.data.skillName
-    assistantMessage.citations = event.data.citations || []
+    assistantMessage.phase = 'GENERATING'
+    // meta 中的是候选而不是最终采用引用；正文完成前不展示引用卡片。
+    assistantMessage.pendingCitations = event.data.citations || []
   } else if (event.event === 'delta') {
-    assistantMessage.content += event.data.text || ''
-    scrollLatest()
+    assistantMessage.phase = 'ANSWERING'
+    renderer.enqueue(event.data.text)
   } else if (event.event === 'done') {
-    assistantMessage.id = event.data.messageId
-    assistantMessage.status = 'COMPLETED'
+    streamState.messageId = event.data.messageId
   } else if (event.event === 'error') {
-    assistantMessage.status = 'FAILED'
-    assistantMessage.error = event.data.message || '回答生成中断，请重试。'
+    streamState.error = event.data.message || '回答生成中断，请重试。'
+  }
+}
+
+function streamStatusText(message) {
+  if (message.content || message.status !== 'STREAMING') return ''
+  return message.phase === 'GENERATING' ? '正在生成回答…' : '正在检索资料…'
+}
+
+function appendStreamCharacter(assistantMessage, character) {
+  assistantMessage.content += character
+  void scrollLatest(false)
+}
+
+function requestConversationDelete(item) {
+  if (busy.value && item.id === currentId.value) return
+  conversationDeleteError.value = ''
+  conversationDeleteTarget.value = item
+}
+
+async function confirmConversationDelete() {
+  const target = conversationDeleteTarget.value
+  if (!target || deletingConversation.value) return
+  deletingConversation.value = true
+  conversationDeleteError.value = ''
+  try {
+    await deleteConversation(target.id)
+    conversationDeleteTarget.value = null
+    await loadSidebar()
+    if (target.id === currentId.value) {
+      current.value = null
+      await router.push('/conversations')
+    }
+  } catch (exception) {
+    conversationDeleteError.value = exception.message
+  } finally {
+    deletingConversation.value = false
   }
 }
 
@@ -125,18 +166,29 @@ async function send(content = question.value) {
   error.value = ''
   question.value = ''
   const userMessage = { id: `local-user-${Date.now()}`, role: 'user', content: value, status: 'COMPLETED' }
-  const assistantMessage = {
+  // 后续 delta 必须修改同一个响应式代理；修改入数组前的原始对象不会触发 Vue 重绘。
+  const assistantMessage = reactive({
     id: `local-assistant-${Date.now()}`, role: 'assistant', content: '', citations: [],
-    skillName: null, status: 'STREAMING', retryQuestion: value, error: '',
-  }
+    pendingCitations: [], skillName: null, status: 'STREAMING', phase: 'RETRIEVING',
+    retryQuestion: value, error: '',
+  })
+  const streamState = { messageId: null, error: '' }
+  const renderer = createStreamTextRenderer((character) => appendStreamCharacter(assistantMessage, character))
   current.value.messages.push(userMessage, assistantMessage)
   await scrollLatest()
   try {
     const result = await streamConversationMessage(current.value.id, value,
-      (event) => streamMessage(event, assistantMessage))
-    if (!result.doneSeen && assistantMessage.status === 'STREAMING') {
+      (event) => streamMessage(event, assistantMessage, renderer, streamState))
+    await renderer.drain()
+    if (streamState.error) {
+      assistantMessage.status = 'FAILED'
+      assistantMessage.error = streamState.error
+    } else if (!result.doneSeen || !streamState.messageId) {
       assistantMessage.status = 'FAILED'
       assistantMessage.error = '连接在回答完成前中断。'
+    } else {
+      assistantMessage.id = streamState.messageId
+      assistantMessage.status = 'COMPLETED'
     }
     if (assistantMessage.status === 'COMPLETED') {
       // 完成事件只在数据库提交后发送，随后从服务端恢复权威消息与标题。
@@ -144,6 +196,7 @@ async function send(content = question.value) {
       await loadSidebar()
     }
   } catch (exception) {
+    await renderer.drain()
     assistantMessage.status = 'FAILED'
     assistantMessage.error = exception.message
   } finally {
@@ -168,6 +221,14 @@ function answerSegments(message) {
   return segments
 }
 
+function referencedCitations(message) {
+  const referencedNumbers = new Set()
+  for (const match of (message.content || '').matchAll(/\[(\d+)]/g)) {
+    referencedNumbers.add(Number(match[1]))
+  }
+  return (message.citations || []).filter((citation) => referencedNumbers.has(Number(citation.number)))
+}
+
 async function focusCitation(message, number) {
   await nextTick()
   document.getElementById(`conversation-citation-${message.id}-${number}`)?.focus()
@@ -178,15 +239,16 @@ onMounted(initialize)
 </script>
 
 <template>
-  <AppShell current="assistant">
+  <AppShell current="assistant-chat">
     <div class="conversation-page" :class="{ 'conversation-page--collapsed': listCollapsed }">
       <aside class="conversation-list" :class="{ 'conversation-list--open': drawerOpen }">
         <div class="conversation-list-head"><strong>助手对话</strong><button class="icon-button conversation-drawer-close" type="button" aria-label="关闭会话列表" @click="drawerOpen = false"><AppIcon name="close" /></button></div>
         <button class="button button--primary conversation-new" type="button" :disabled="busy || !availableAssistants.length" @click="router.push('/conversations')">＋ 新对话</button>
         <nav aria-label="历史会话">
-          <button v-for="item in conversations" :key="item.id" type="button" :class="{ active: item.id === currentId }" @click="selectConversation(item.id)">
-            <strong>{{ item.title }}</strong><span>{{ item.assistantName }}</span>
-          </button>
+          <div v-for="item in conversations" :key="item.id" class="conversation-list-item" :class="{ active: item.id === currentId }">
+            <button class="conversation-list-select" type="button" @click="selectConversation(item.id)"><strong>{{ item.title }}</strong><span>{{ item.assistantName }}</span></button>
+            <button class="conversation-list-delete" type="button" :disabled="busy && item.id === currentId" :aria-label="`删除会话 ${item.title}`" @click="requestConversationDelete(item)"><AppIcon name="trash" :size="14" /></button>
+          </div>
           <p v-if="!conversations.length">暂无历史会话</p>
         </nav>
       </aside>
@@ -203,7 +265,7 @@ onMounted(initialize)
           <div v-if="loading" class="conversation-empty"><p>正在加载会话…</p></div>
           <section v-else-if="!current" class="conversation-empty">
             <span><AppIcon name="bot" :size="30" /></span><h1>开始一次教学对话</h1>
-            <p v-if="availableAssistants.length">选定智能体后，技能与讲义范围将在会话中锁定；教师后续修改会从下一轮生效。</p>
+            <p v-if="availableAssistants.length">选定智能体后，每轮回答都会先检索教师当前绑定的讲义，并应用匹配技能。</p>
             <p v-else>当前班级没有可用的智能体，请联系教师先启用一个智能体。</p>
             <form v-if="availableAssistants.length" class="conversation-start" @submit.prevent="startConversation">
               <label><span>选择智能体</span><select v-model="selectedAssistantId"><option v-for="item in availableAssistants" :key="item.id" :value="String(item.id)">{{ item.name }}</option></select></label>
@@ -218,10 +280,10 @@ onMounted(initialize)
                 <div class="chat-assistant-avatar" aria-hidden="true"><AppIcon name="bot" /></div>
                 <div class="chat-assistant-content">
                   <div v-if="message.skillName" class="conversation-skill">已使用技能 · {{ message.skillName }}</div>
-                  <p class="chat-answer"><template v-for="(segment, index) in answerSegments(message)" :key="index"><button v-if="segment.type === 'citation'" class="chat-inline-citation" type="button" @click="focusCitation(message, segment.number)">{{ segment.text }}</button><template v-else>{{ segment.text }}</template></template><span v-if="message.status === 'STREAMING'" class="stream-cursor" aria-label="正在生成"></span></p>
+                  <p class="chat-answer"><span v-if="streamStatusText(message)" class="stream-status">{{ streamStatusText(message) }}</span><template v-for="(segment, index) in answerSegments(message)" :key="index"><button v-if="segment.type === 'citation'" class="chat-inline-citation" type="button" @click="focusCitation(message, segment.number)">{{ segment.text }}</button><template v-else>{{ segment.text }}</template></template><span v-if="message.status === 'STREAMING'" class="stream-cursor" aria-label="正在生成"></span></p>
                   <div v-if="message.status === 'FAILED'" class="conversation-failed" role="status"><strong>回答已中断</strong><span>{{ message.error || '已保留生成的部分内容。' }}</span><button v-if="message.retryQuestion" type="button" :disabled="busy" @click="send(message.retryQuestion)">重新发送问题</button></div>
-                  <ol v-if="message.citations?.length" class="chat-citations">
-                    <li v-for="citation in message.citations" :id="`conversation-citation-${message.id}-${citation.number}`" :key="citation.number" class="chat-citation" tabindex="-1">
+                  <ol v-if="referencedCitations(message).length" class="chat-citations">
+                    <li v-for="citation in referencedCitations(message)" :id="`conversation-citation-${message.id}-${citation.number}`" :key="citation.number" class="chat-citation" tabindex="-1">
                       <div class="chat-citation-heading"><strong>[{{ citation.number }}] {{ citation.materialTitle }}</strong><RouterLink :to="`/materials?material=${citation.materialId}&chunk=${citation.chunkId}`">查看上下文</RouterLink></div>
                       <p>{{ citation.excerpt }}</p>
                     </li>
@@ -234,9 +296,15 @@ onMounted(initialize)
 
         <footer v-if="current" class="conversation-composer-wrap">
           <form class="chat-composer" @submit.prevent="send()"><div class="chat-input-row"><textarea v-model="question" rows="2" maxlength="500" placeholder="向教学助手提问…" aria-label="问题" :disabled="busy" @keydown.enter.exact.prevent="send()" /><button class="chat-send" type="submit" :disabled="busy || !question.trim()" aria-label="发送"><span aria-hidden="true">↑</span></button></div><div class="conversation-composer-meta"><span>{{ current.assistantName }}</span><span>{{ [...question].length }}/500</span></div></form>
-          <p class="chat-disclaimer">回答会保存到当前会话；请结合引用讲义核对重要内容。</p>
+          <p class="chat-disclaimer">回答前会检索智能体绑定的讲义；回答将保存到当前会话，请结合引用核对。</p>
         </footer>
       </section>
     </div>
+
+    <BaseModal v-if="conversationDeleteTarget" title="删除会话" description="该会话的所有消息将一并删除。" @close="!deletingConversation && (conversationDeleteTarget = null)">
+      <div class="delete-warning"><span><AppIcon name="trash" /></span><p>确定删除“{{ conversationDeleteTarget.title }}”吗？此操作无法撤销。</p></div>
+      <p v-if="conversationDeleteError" class="feedback feedback--error" role="alert">{{ conversationDeleteError }}</p>
+      <template #footer><button class="button button--secondary" type="button" :disabled="deletingConversation" @click="conversationDeleteTarget = null">取消</button><button class="button button--danger" type="button" :disabled="deletingConversation" @click="confirmConversationDelete">{{ deletingConversation ? '删除中…' : '确认删除' }}</button></template>
+    </BaseModal>
   </AppShell>
 </template>

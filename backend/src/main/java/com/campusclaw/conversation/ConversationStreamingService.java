@@ -16,10 +16,13 @@ public class ConversationStreamingService {
 
     private final ConversationService conversations;
     private final ObjectMapper objectMapper;
+    private final ConversationCitationNormalizer citationNormalizer;
 
-    public ConversationStreamingService(ConversationService conversations, ObjectMapper objectMapper) {
+    public ConversationStreamingService(ConversationService conversations, ObjectMapper objectMapper,
+                                        ConversationCitationNormalizer citationNormalizer) {
         this.conversations = conversations;
         this.objectMapper = objectMapper;
+        this.citationNormalizer = citationNormalizer;
     }
 
     public void stream(AgentTurnPreparation preparation, OutputStream output) {
@@ -37,9 +40,11 @@ public class ConversationStreamingService {
             if (visibleText.toString().isBlank()) {
                 throw new IllegalStateException("Chat stream produced no visible text");
             }
+            ConversationCitationNormalizer.NormalizedAnswer normalized = citationNormalizer.normalize(
+                    visibleText.toString(), plan.citations());
             ConversationMessage saved = conversations.saveAssistantMessage(
                     preparation.conversationId(), preparation.userId(), preparation.classId(),
-                    visibleText.toString(), plan.skillName(), plan.citations(), MessageStatus.COMPLETED);
+                    normalized.content(), plan.skillName(), normalized.citations(), MessageStatus.COMPLETED);
             completedMessage[0] = true;
             writer.write("done", Map.of("messageId", saved.getId()));
         } catch (RuntimeException exception) {
@@ -77,9 +82,11 @@ public class ConversationStreamingService {
 
     private void persistFailed(AgentTurnPreparation preparation, String partialText) {
         try {
+            ConversationCitationNormalizer.NormalizedAnswer normalized = citationNormalizer.normalize(
+                    partialText, preparation.plan().citations());
             conversations.saveAssistantMessage(
                     preparation.conversationId(), preparation.userId(), preparation.classId(),
-                    partialText, preparation.plan().skillName(), preparation.plan().citations(), MessageStatus.FAILED);
+                    normalized.content(), preparation.plan().skillName(), normalized.citations(), MessageStatus.FAILED);
         } catch (RuntimeException persistenceFailure) {
             log.warn("Could not persist interrupted assistant message for conversation {}",
                     preparation.conversationId());

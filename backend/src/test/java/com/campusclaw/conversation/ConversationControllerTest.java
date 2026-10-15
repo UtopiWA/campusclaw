@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -150,6 +151,14 @@ class ConversationControllerTest {
                         .jsonPath("$.messages[0].skillName").value("解题引导"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
                         .jsonPath("$.messages[0].citations[0].number").value(1));
+    }
+
+    @Test
+    void deletesOnlyThroughTheCurrentUserScope() throws Exception {
+        mvc.perform(delete("/api/conversations/9"))
+                .andExpect(status().isNoContent());
+
+        verify(conversations).delete(9L, user);
     }
 
     private void assertPreflightStatus(int expectedStatus) throws Exception {

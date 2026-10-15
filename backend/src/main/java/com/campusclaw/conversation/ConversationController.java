@@ -16,6 +16,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -67,6 +68,13 @@ public class ConversationController {
     @Operation(summary = "读取会话详情", description = "返回服务端持久化的完整消息、状态、技能和引用。")
     public ConversationView get(@PathVariable Long id) {
         return conversations.get(id, currentUsers.requireUser());
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "删除当前用户的会话")
+    public void delete(@PathVariable Long id) {
+        conversations.delete(id, currentUsers.requireUser());
     }
 
     @PostMapping(value = "/{id}/messages", consumes = MediaType.APPLICATION_JSON_VALUE,

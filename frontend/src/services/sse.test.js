@@ -49,4 +49,17 @@ describe('parseEventStream', () => {
     await expect(parseEventStream(stream, consumer)).rejects.toThrow('无法解析')
     expect(consumer).not.toHaveBeenCalled()
   })
+
+  it('waits for each event consumer before delivering the next frame in the same chunk', async () => {
+    const source = 'event: delta\ndata: {"text":"一"}\n\nevent: delta\ndata: {"text":"二"}\n\n'
+    const order = []
+
+    await parseEventStream(byteStream(new TextEncoder().encode(source), [1000]), async (event) => {
+      order.push(`start-${event.data.text}`)
+      await Promise.resolve()
+      order.push(`end-${event.data.text}`)
+    })
+
+    expect(order).toEqual(['start-一', 'end-一', 'start-二', 'end-二'])
+  })
 })

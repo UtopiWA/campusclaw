@@ -7,7 +7,7 @@ export async function parseEventStream(stream, onEvent) {
   let buffer = ''
   let doneSeen = false
 
-  const consumeFrames = (finished = false) => {
+  const consumeFrames = async (finished = false) => {
     buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
     const frames = buffer.split('\n\n')
     buffer = finished ? '' : frames.pop()
@@ -28,7 +28,8 @@ export async function parseEventStream(stream, onEvent) {
         throw new Error('服务器返回了无法解析的流式数据。')
       }
       if (!['meta', 'delta', 'done', 'error'].includes(event)) continue
-      onEvent({ event, data: payload })
+      // 等待消费者完成，避免同一网络块中的多帧被 UI 框架合并成一次渲染。
+      await onEvent({ event, data: payload })
       if (event === 'done') doneSeen = true
     }
   }
@@ -37,10 +38,10 @@ export async function parseEventStream(stream, onEvent) {
     const { value, done } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
-    consumeFrames()
+    await consumeFrames()
   }
   buffer += decoder.decode()
   if (buffer.trim()) buffer += '\n\n'
-  consumeFrames(true)
+  await consumeFrames(true)
   return { doneSeen }
 }

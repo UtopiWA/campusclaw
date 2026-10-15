@@ -39,7 +39,8 @@ public record AppProperties(
     public record Chat(
             @NotBlank String baseUrl,
             @NotBlank String apiKey,
-            @NotBlank String model) {
+            @NotBlank String model,
+            String reasoningEffort) {
     }
 
     public record Retrieval(

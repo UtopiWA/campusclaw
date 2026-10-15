@@ -56,6 +56,7 @@ app:
     base-url: ${CHAT_BASE_URL}
     api-key: ${CHAT_API_KEY}
     model: ${CHAT_MODEL}
+    reasoning-effort: ${CHAT_REASONING_EFFORT:none}
   retrieval:
     connect-timeout: ${RETRIEVAL_CONNECT_TIMEOUT:3s}
     read-timeout: ${RETRIEVAL_READ_TIMEOUT:30s}

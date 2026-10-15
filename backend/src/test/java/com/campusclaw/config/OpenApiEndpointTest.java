@@ -58,6 +58,7 @@ class OpenApiEndpointTest {
                 .andExpect(jsonPath("$.paths['/api/skills/{id}'].delete").exists())
                 .andExpect(jsonPath("$.paths['/api/conversations'].post").exists())
                 .andExpect(jsonPath("$.paths['/api/conversations/{id}'].get").exists())
+                .andExpect(jsonPath("$.paths['/api/conversations/{id}'].delete").exists())
                 .andExpect(jsonPath("$.paths['/api/conversations/{id}/messages'].post.responses['200'].content['text/event-stream']").exists())
                 .andExpect(jsonPath("$.components.schemas.AssistantConfigRequest").exists())
                 .andExpect(jsonPath("$.components.schemas.SkillSourceRequest").exists())

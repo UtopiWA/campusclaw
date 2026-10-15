@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { authState } from '../services/auth.js'
-import { authGuard } from './index.js'
+import router, { authGuard } from './index.js'
 
 describe('authGuard', () => {
   beforeEach(() => {
@@ -19,10 +19,9 @@ describe('authGuard', () => {
     expect(result).toBe('/materials')
   })
 
-  it.each(['teacher', 'student'])('allows an authenticated %s to enter search', async (role) => {
-    authState.user = { id: 1, role }
-    const result = await authGuard({ path: '/search', fullPath: '/search', meta: { requiresAuth: true } })
-    expect(result).toBe(true)
+  it('keeps the old search URL as a redirect to materials', () => {
+    const route = router.getRoutes().find((item) => item.path === '/search')
+    expect(route.redirect).toBe('/materials')
   })
 
   it('allows only teachers to enter assistant configuration', async () => {

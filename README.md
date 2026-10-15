@@ -21,7 +21,7 @@
    Copy-Item .env.example .env
    ```
 
-2. 编辑 `.env`，替换全部 `replace-*` 占位值。演示环境需保留 `DEMO_SEED_ENABLED=true` 并设置 `DEMO_SEED_PASSWORD`。
+2. 编辑 `.env`，替换全部 `replace-*` 占位值。默认关闭演示数据初始化；仅在确实需要创建演示账号、讲义、助手和技能时，才设置 `DEMO_SEED_ENABLED=true` 并配置 `DEMO_SEED_PASSWORD`。
 3. 构建并启动：
 
    ```powershell
@@ -75,7 +75,7 @@ Compose 仅将 MySQL 暴露到宿主机回环地址，不会监听局域网网�
 $env:DB_URL = "jdbc:mysql://localhost:3306/campusclaw?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC"
 $env:DB_USERNAME = "campusclaw"
 $env:DB_PASSWORD = "本地数据库密码"
-$env:DEMO_SEED_ENABLED = "true"
+$env:DEMO_SEED_ENABLED = "false"
 $env:DEMO_SEED_PASSWORD = "本地演示口令"
 $env:AUTH_JWT_SECRET = "至少32字节的本地随机JWT签名密钥"
 $env:AUTH_JWT_TTL = "PT8H"
@@ -89,9 +89,12 @@ $env:EMBEDDING_DIMENSION = "1024"
 $env:CHAT_BASE_URL = "https://你的兼容服务/v1"
 $env:CHAT_API_KEY = "本地密钥"
 $env:CHAT_MODEL = "对话模型名"
+$env:CHAT_REASONING_EFFORT = "none"
 Set-Location backend
 .\mvnw.cmd spring-boot:run
 ```
+
+`CHAT_REASONING_EFFORT=none` 会让支持该 OpenAI-compatible 扩展的服务跳过不会展示的私有推理阶段；若供应商不接受该字段，可将变量显式设置为空，使网关省略它。
 
 另开终端启动前端：
 
@@ -124,9 +127,9 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 | `GET/POST /api/skills` | 列出技能；教师从结构化原文创建技能 |
 | `GET/PUT/DELETE /api/skills/{id}` | 读取、更新或由教师删除本班技能 |
 | `GET/POST /api/assistants` | 列出智能体；教师创建完整智能体配置 |
-| `GET/PUT /api/assistants/{id}` | 读取或由教师原子替换智能体主体和绑定 |
+| `GET/PUT/DELETE /api/assistants/{id}` | 读取、原子替换或删除无历史消息的智能体；删除时自动清理零消息会话，真实历史仍返回 409 |
 | `GET/POST /api/conversations` | 列出本人会话或选择已启用智能体创建会话 |
-| `GET /api/conversations/{id}` | 恢复本人会话的消息、状态、技能和引用 |
+| `GET/DELETE /api/conversations/{id}` | 恢复或删除本人会话；删除会级联清理其消息 |
 | `POST /api/conversations/{id}/messages` | 提交问题并返回 UTF-8 SSE 回答 |
 | `GET /health` | 无需登录的应用与数据库健康检查 |
 
@@ -136,9 +139,9 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 
 ## 智能体配置与流式会话
 
-教师可在 `/assistants` 编辑技能原文，并配置智能体名称、角色提示词、启用状态、技能和 READY 材料绑定。技能只允许 `knowledge_search` 工具；服务端先完整解析和验证原文，再写入结构化字段，失败不会覆盖旧配置。学生只能读取已启用智能体摘要，不能看到提示词和绑定。
+教师可在 `/assistants` 通过技能名称、触发关键词/适用条件、资料范围、行为说明和工具复选项维护技能，并可直接在列表启停技能；前端将表单组装为既有技能文本，服务端仍负责完整解析与校验。名称包含“解题引导”且条件声明习题类别时，服务端用固定题目特征补充确定性命中，并强制只追问或给出至多一步提示，不输出最终答案。智能体同时配置名称、角色提示词、技能和 READY 材料绑定，启用/停用放在列表与编辑、删除并列。没有历史消息的智能体可删除，零消息空会话会自动清理；已有真实会话时应停用以保留历史。学生只能读取已启用智能体摘要，不能看到提示词和绑定。
 
-`/conversations` 是独立于旧 `/search` 的持久化会话入口。会话固定当前用户、班级和智能体；每轮提问会重新读取教师最新绑定，但单轮开始后使用不可变快照。用户消息先提交，随后只在绑定材料内执行检索。没有依据时仍调用模型，但服务端会从增量正文中移除 `[n]` 引用标记。
+`/conversations` 是教师和学生共用的持久化助手对话入口。会话固定当前用户、班级和智能体；每轮提问会重新读取教师最新绑定，但单轮开始后使用不可变快照。用户消息先提交，随后只在绑定材料内执行检索。没有可靠依据时不调用模型，服务端以相同 SSE 流程返回固定无依据答复；有候选时，最终落库前仅保留正文实际采用的片段并按首次出现顺序从 `[1]` 重新编号，模型完全漏标时只补一条文本最匹配依据。SSE 解帧器按事件等待页面消费，正文按 Unicode 字符逐帧绘制，最终引用只在 `done` 后展示。历史会话可由本人在侧边栏删除。直接片段检索位于 `/materials` 的“讲义与检索”页面；旧 `/search` 会跳转到该页面。
 
 正常 SSE 协议为：
 
@@ -150,7 +153,7 @@ event: done   data: {messageId}             # 助手消息事务提交后发送
 
 流开始后失败时不发送 `done`：已有正文会尽力保存为 `FAILED` 并发送脱敏 `error`，没有正文则不创建空助手消息。前端保留部分回答并提供重试；完成后与刷新时均从服务端详情恢复事实状态。旧 `/api/ask` 仍保持非流式、无命中不调用 Chat 的原语义。
 
-API 文档位于 <http://localhost:8080/swagger-ui/index.html>，OpenAPI JSON 位于 <http://localhost:8080/v3/api-docs>。两条文档路径允许匿名访问，所有 `/api/**` 业务接口仍要求 Bearer JWT；文档只描述配置名称和协议，不包含真实密钥或口令。
+API 文档位于 <http://localhost:8080/swagger-ui/index.html>，OpenAPI JSON 位于 <http://localhost:8080/v3/api-docs>。前端 Nginx 会把这些路径显式代理到 Springdoc，而不会交给 Vue 路由；两条文档路径允许匿名访问，所有 `/api/**` 业务接口仍要求 Bearer JWT。
 
 ## 接口回归测试
 
@@ -175,8 +178,8 @@ python apitest/run_all.py
 - 手机端：隐藏侧栏，保留移动品牌顶栏，内容和操作纵向排列。
 - 作业和审计等尚未实现菜单明确显示“待建设”，不作为空链接。
 - `.md` 在线查看只展示源文本，不执行用户文件中的 HTML。
-- 知识检索页使用占满剩余视口的独立消息流与底部紧凑输入器；失败只附着在对应消息，可保留原模式原地重试。
-- 智能体配置页继续复用内容卡、按钮、模态框和设计令牌；会话页使用服务端会话列表、独立滚动消息区、底部输入器以及移动端抽屉。
+- “讲义与检索”页同时承载直接片段检索和材料查看/下载；教师在同页看到上传、重命名、重建和删除操作。
+- 智能体配置页使用结构化技能表单和列表启停开关；“助手对话”使用服务端会话列表、独立滚动消息区、固定底部输入器以及移动端抽屉。
 
 ## 验证
 

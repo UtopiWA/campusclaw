@@ -8,6 +8,7 @@ export const createAssistant = (payload) => apiRequest('/api/assistants', {
 export const updateAssistant = (id, payload) => apiRequest(`/api/assistants/${id}`, {
   method: 'PUT', body: JSON.stringify(payload),
 })
+export const deleteAssistant = (id) => apiRequest(`/api/assistants/${id}`, { method: 'DELETE' })
 
 export const listSkills = () => apiRequest('/api/skills')
 export const createSkill = (sourceText) => apiRequest('/api/skills', {

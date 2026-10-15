@@ -11,22 +11,24 @@ import org.springframework.stereotype.Service;
 /** 将知识条目确定性切分为 Unicode 安全且可回溯的检索片段。 */
 @Service
 public class ChunkingService {
+    private static final int HIERARCHY_MAX_CODE_POINTS = 800;
+    private static final int HIERARCHY_MAX_PREFIX_CODE_POINTS = 240;
     private static final Pattern URL = Pattern.compile("(?i)https?://\\S+|www\\.\\S+");
     private static final Pattern EMAIL = Pattern.compile("(?i)[\\p{L}0-9._%+-]+@[\\p{L}0-9.-]+\\.[A-Z]{2,}");
-    private static final Pattern HEADING = Pattern.compile("(?m)^#{1,3}[ \\t]+.+$");
+    private static final Pattern HEADING = Pattern.compile("(?m)^(#{1,3})[ \\t]+.+$");
 
     public List<ChunkDraft> chunkEntries(List<SourceEntry> entries, ChunkingOptions requested) {
         ChunkingOptions options = requested.validated();
+        validateEntries(entries);
+        if (options.strategy() == IndexStrategy.HIERARCHY) {
+            return hierarchyChunks(entries);
+        }
         List<ChunkDraft> result = new ArrayList<>();
         int nextIndex = 0;
         for (SourceEntry entry : entries) {
-            if (entry == null || entry.id() == null || entry.text() == null) {
-                throw new BadRequestException("Knowledge entry is incomplete");
-            }
             String input = options.preprocess() ? preprocess(entry.text()) : normalizeLineEndings(entry.text());
-            List<Range> ranges = options.strategy() == IndexStrategy.HIERARCHY
-                    ? hierarchyRanges(input)
-                    : windowRanges(input, options.maxCodePoints(), overlap(options), options.breakPreference());
+            List<Range> ranges = windowRanges(
+                    input, options.maxCodePoints(), overlap(options), options.breakPreference());
             for (Range range : ranges) {
                 String value = substringByCodePoints(input, range.start(), range.end());
                 if (!value.isBlank()) {
@@ -37,6 +39,17 @@ public class ChunkingService {
         return List.copyOf(result);
     }
 
+    private void validateEntries(List<SourceEntry> entries) {
+        if (entries == null) {
+            throw new BadRequestException("Knowledge entries are required");
+        }
+        for (SourceEntry entry : entries) {
+            if (entry == null || entry.id() == null || entry.text() == null) {
+                throw new BadRequestException("Knowledge entry is incomplete");
+            }
+        }
+    }
+
     public String preprocess(String source) {
         String normalized = normalizeLineEndings(source);
         return EMAIL.matcher(URL.matcher(normalized).replaceAll(" ")).replaceAll(" ")
@@ -44,27 +57,96 @@ public class ChunkingService {
                 .trim();
     }
 
-    private List<Range> hierarchyRanges(String text) {
-        Matcher matcher = HEADING.matcher(text);
-        List<Integer> starts = new ArrayList<>();
-        while (matcher.find()) {
-            starts.add(text.codePointCount(0, matcher.start()));
+    /** 跨知识条目维护 Markdown 标题栈，纯标题只为后续正文提供检索上下文。 */
+    private List<ChunkDraft> hierarchyChunks(List<SourceEntry> entries) {
+        List<ChunkDraft> result = new ArrayList<>();
+        String[] headingPath = new String[3];
+        int nextIndex = 0;
+        for (SourceEntry entry : entries) {
+            String input = normalizeLineEndings(entry.text());
+            for (HierarchySection section : hierarchySections(input)) {
+                if (section.heading() != null) {
+                    updateHeadingPath(headingPath, section.heading());
+                }
+                String body = substringByCodePoints(input, section.start(), section.end());
+                if (!hasMeaningfulBody(body)) {
+                    continue;
+                }
+                String prefix = hierarchyPrefix(headingPath);
+                int prefixLength = prefix.codePointCount(0, prefix.length());
+                int bodyLimit = Math.max(1, HIERARCHY_MAX_CODE_POINTS
+                        - prefixLength - (prefix.isEmpty() ? 0 : 1));
+                int bodyOverlap = Math.min(80, bodyLimit / 10);
+                List<Range> ranges = windowRanges(input, section.start(), section.end(),
+                        bodyLimit, bodyOverlap, BreakPreference.PARAGRAPH);
+                for (Range range : ranges) {
+                    String value = substringByCodePoints(input, range.start(), range.end());
+                    if (value.isBlank()) {
+                        continue;
+                    }
+                    String contextualText = prefix.isEmpty() ? value : prefix + "\n" + value;
+                    result.add(new ChunkDraft(entry.id(), nextIndex++, contextualText,
+                            range.start(), range.end()));
+                }
+            }
         }
-        if (starts.isEmpty()) {
-            return windowRanges(text, 800, 80, BreakPreference.PARAGRAPH);
+        return List.copyOf(result);
+    }
+
+    private List<HierarchySection> hierarchySections(String text) {
+        Matcher matcher = HEADING.matcher(text);
+        List<Heading> headings = new ArrayList<>();
+        while (matcher.find()) {
+            headings.add(new Heading(matcher.group(1).length(), matcher.group(),
+                    text.codePointCount(0, matcher.start()), text.codePointCount(0, matcher.end())));
+        }
+        int total = text.codePointCount(0, text.length());
+        if (headings.isEmpty()) {
+            return List.of(new HierarchySection(null, 0, total));
         }
 
-        List<Range> result = new ArrayList<>();
-        int total = text.codePointCount(0, text.length());
-        if (starts.get(0) > 0) {
-            result.addAll(windowRanges(text, 0, starts.get(0), 800, 80, BreakPreference.PARAGRAPH));
+        List<HierarchySection> result = new ArrayList<>();
+        if (headings.get(0).start() > 0) {
+            result.add(new HierarchySection(null, 0, headings.get(0).start()));
         }
-        for (int index = 0; index < starts.size(); index++) {
-            int start = starts.get(index);
-            int end = index + 1 < starts.size() ? starts.get(index + 1) : total;
-            result.addAll(windowRanges(text, start, end, 800, 80, BreakPreference.PARAGRAPH));
+        for (int index = 0; index < headings.size(); index++) {
+            Heading heading = headings.get(index);
+            int end = index + 1 < headings.size() ? headings.get(index + 1).start() : total;
+            result.add(new HierarchySection(heading, heading.end(), end));
         }
-        return result;
+        return List.copyOf(result);
+    }
+
+    private void updateHeadingPath(String[] path, Heading heading) {
+        int index = heading.level() - 1;
+        path[index] = heading.line().trim();
+        for (int deeper = index + 1; deeper < path.length; deeper++) {
+            path[deeper] = null;
+        }
+    }
+
+    private String hierarchyPrefix(String[] headingPath) {
+        StringBuilder prefix = new StringBuilder();
+        for (String heading : headingPath) {
+            if (heading == null || heading.isBlank()) {
+                continue;
+            }
+            if (!prefix.isEmpty()) {
+                prefix.append('\n');
+            }
+            prefix.append(heading);
+        }
+        String value = prefix.toString();
+        int length = value.codePointCount(0, value.length());
+        if (length <= HIERARCHY_MAX_PREFIX_CODE_POINTS) {
+            return value;
+        }
+        return substringByCodePoints(value, 0, HIERARCHY_MAX_PREFIX_CODE_POINTS);
+    }
+
+    private boolean hasMeaningfulBody(String value) {
+        String withoutRules = value.replaceAll("(?m)^\\s*(?:-{3,}|_{3,}|\\*{3,})\\s*$", "").trim();
+        return withoutRules.codePoints().anyMatch(Character::isLetterOrDigit);
     }
 
     private List<Range> windowRanges(String text, int max, int overlap, BreakPreference preference) {
@@ -145,6 +227,12 @@ public class ChunkingService {
     }
 
     public record SourceEntry(Long id, String text) {
+    }
+
+    private record Heading(int level, String line, int start, int end) {
+    }
+
+    private record HierarchySection(Heading heading, int start, int end) {
     }
 
     private record Range(int start, int end) {

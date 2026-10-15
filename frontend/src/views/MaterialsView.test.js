@@ -116,10 +116,37 @@ describe('MaterialsView', () => {
     const wrapper = mount(MaterialsView, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
     await flushPromises()
     expect(wrapper.text()).not.toContain('上传讲义')
+    expect(wrapper.text()).toContain('讲义与检索')
     expect(wrapper.text()).toContain('学生')
     expect(wrapper.find('[aria-label="重命名 示例知识"]').exists()).toBe(false)
     expect(wrapper.find('[aria-label="重建索引 示例知识"]').exists()).toBe(false)
     expect(wrapper.find('[aria-label="查看 示例知识"]').attributes('disabled')).toBeDefined()
+  })
+
+  it.each(['teacher', 'student'])('lets a %s directly search class materials', async (role) => {
+    authState.user = { username: `${role}-a`, role, className: '班级 A' }
+    apiRequest
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({
+        mode: 'hybrid', message: '找到相关内容', hits: [{
+          materialId: 9, materialTitle: '函数讲义', chunkId: 22, excerpt: '函数定义域相关片段',
+          startOffset: 10, endOffset: 28, finalScore: 0.92, keywordRank: 4, vectorRank: 1,
+        }],
+      })
+
+    const wrapper = mount(MaterialsView, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
+    await flushPromises()
+    await wrapper.find('.lecture-search-input input').setValue('函数定义域')
+    await wrapper.find('.lecture-search-form').trigger('submit')
+    await flushPromises()
+
+    expect(apiRequest).toHaveBeenCalledWith('/api/retrieval/search', {
+      method: 'POST', body: JSON.stringify({ query: '函数定义域', mode: 'hybrid', limit: 10 }),
+    })
+    expect(wrapper.find('.lecture-results').text()).toContain('找到 1 条依据')
+    expect(wrapper.find('.chat-hit-number').text()).toBe('1')
+    expect(wrapper.text()).toContain('函数定义域相关片段')
+    expect(wrapper.text()).toContain('仅 班级 A')
   })
 
   it('loads file content into a plain-text preview', async () => {

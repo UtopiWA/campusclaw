@@ -93,7 +93,7 @@ class ChunkingServiceTest {
 
         assertThat(chunks).hasSizeGreaterThanOrEqualTo(3);
         assertThat(chunks.get(0).text()).startsWith("# 第一章");
-        assertThat(chunks.get(1).text()).startsWith("## 第二节");
+        assertThat(chunks.get(1).text()).startsWith("# 第一章\n## 第二节");
         assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.text().codePointCount(0, chunk.text().length()))
                 .isLessThanOrEqualTo(800));
     }
@@ -112,6 +112,42 @@ class ChunkingServiceTest {
                 List.of(new ChunkingService.SourceEntry(1L, "# 第一章\n## 空节\n### 内容\n正文")),
                 ChunkingOptions.hierarchy());
         assertThat(consecutive).extracting(ChunkDraft::text)
-                .containsExactly("# 第一章", "## 空节", "### 内容\n正文");
+                .containsExactly("# 第一章\n## 空节\n### 内容\n正文");
+    }
+
+    @Test
+    void hierarchyCarriesHeadingPathAcrossEntriesWithoutIndexingTitleOnlyEntries() {
+        List<ChunkDraft> chunks = service.chunkEntries(List.of(
+                new ChunkingService.SourceEntry(1L, "# 《岳阳楼记》课文解析讲义"),
+                new ChunkingService.SourceEntry(2L, "---"),
+                new ChunkingService.SourceEntry(3L, "## 一、课文基本信息"),
+                new ChunkingService.SourceEntry(4L, "**作者：**范仲淹"),
+                new ChunkingService.SourceEntry(5L, "## 二、写作背景"),
+                new ChunkingService.SourceEntry(6L, "↓"),
+                new ChunkingService.SourceEntry(7L, "滕子京被贬后请范仲淹作记。")),
+                ChunkingOptions.hierarchy());
+
+        assertThat(chunks).hasSize(2);
+        assertThat(chunks).extracting(ChunkDraft::text).containsExactly(
+                "# 《岳阳楼记》课文解析讲义\n## 一、课文基本信息\n**作者：**范仲淹",
+                "# 《岳阳楼记》课文解析讲义\n## 二、写作背景\n滕子京被贬后请范仲淹作记。");
+        assertThat(chunks).extracting(ChunkDraft::sourceEntryId).containsExactly(4L, 7L);
+        assertThat(chunks).extracting(ChunkDraft::startOffset).containsExactly(0, 0);
+        assertThat(chunks).extracting(ChunkDraft::chunkIndex).containsExactly(0, 1);
+    }
+
+    @Test
+    void hierarchyCountsContextPrefixWithinLimitAndKeepsBodyOffsets() {
+        String body = "😀" + "文".repeat(900);
+        List<ChunkDraft> chunks = service.chunkEntries(List.of(
+                new ChunkingService.SourceEntry(1L, "# 总标题"),
+                new ChunkingService.SourceEntry(2L, "## 小节"),
+                new ChunkingService.SourceEntry(3L, body)), ChunkingOptions.hierarchy());
+
+        assertThat(chunks).hasSize(2).allSatisfy(chunk ->
+                assertThat(chunk.text().codePointCount(0, chunk.text().length())).isLessThanOrEqualTo(800));
+        assertThat(chunks.get(0).text()).startsWith("# 总标题\n## 小节\n😀");
+        assertThat(chunks.get(0).startOffset()).isZero();
+        assertThat(chunks.get(0).endOffset()).isLessThanOrEqualTo(body.codePointCount(0, body.length()));
     }
 }

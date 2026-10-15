@@ -1,11 +1,12 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AppIcon from '../components/AppIcon.vue'
 import AppShell from '../components/AppShell.vue'
 import BaseModal from '../components/BaseModal.vue'
 import { apiRequest } from '../services/api.js'
 import { authState } from '../services/auth.js'
+import { searchKnowledge } from '../services/retrieval.js'
 
 const materials = ref([])
 const selectedFile = ref(null)
@@ -20,6 +21,11 @@ const retryBusyIds = ref(new Set())
 const error = ref('')
 const notice = ref('')
 const query = ref('')
+const retrievalQuery = ref('')
+const retrievalMode = ref('hybrid')
+const retrievalBusy = ref(false)
+const retrievalError = ref('')
+const retrievalResult = ref(null)
 const uploadOpen = ref(false)
 const dragActive = ref(false)
 const viewOpen = ref(false)
@@ -52,6 +58,29 @@ const filteredMaterials = computed(() => {
     [material.title, material.originalFilename].some((value) => value?.toLocaleLowerCase('zh-CN').includes(keyword)),
   )
 })
+
+/** 在当前班级范围执行直接检索，展示序号始终按最终结果从 1 重新计算。 */
+async function searchMaterials() {
+  const value = retrievalQuery.value.trim()
+  const length = [...value].length
+  if (length < 1 || length > 1000) {
+    retrievalError.value = '请输入 1～1000 个字符的检索内容。'
+    return
+  }
+  retrievalBusy.value = true
+  retrievalError.value = ''
+  try {
+    retrievalResult.value = await searchKnowledge(value, retrievalMode.value)
+  } catch (exception) {
+    retrievalError.value = exception.message
+  } finally {
+    retrievalBusy.value = false
+  }
+}
+
+function score(value) {
+  return value == null ? '—' : Number(value).toFixed(4)
+}
 
 async function loadMaterials({ manual = false } = {}) {
   if (manual) {
@@ -351,11 +380,19 @@ async function openRouteContext() {
   await viewMaterial(material, chunkId)
 }
 
+// 同一条结果被再次点击时路由参数不会变化，因此直接重开弹窗；首次点击由路由 watcher 处理。
+function reopenCurrentHit(hit) {
+  if (Number(route.query.material) !== hit.materialId || Number(route.query.chunk) !== hit.chunkId) return
+  const material = materials.value.find((item) => item.id === hit.materialId)
+  if (material) viewMaterial(material, hit.chunkId)
+}
+
 onMounted(async () => {
   document.addEventListener('visibilitychange', handleVisibilityChange)
   await loadMaterials()
   await openRouteContext()
 })
+watch(() => [route.query.material, route.query.chunk], openRouteContext)
 onBeforeUnmount(() => {
   if (statusRefreshTimer) clearTimeout(statusRefreshTimer)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
@@ -367,14 +404,42 @@ onBeforeUnmount(() => {
     <div class="page-container">
       <header class="page-heading">
         <div>
-          <p class="breadcrumb">知识库 <span>/</span> 讲义管理</p>
-          <h1>{{ isTeacher ? '讲义管理' : '讲义与检索' }}</h1>
-          <p>{{ isTeacher ? '管理本班讲义，上传后自动解析并沉淀为知识片段。' : '查看和下载教师为本班准备的教学材料。' }}</p>
+          <p class="breadcrumb">知识库 <span>/</span> 讲义与检索</p>
+          <h1>讲义与检索</h1>
+          <p>{{ isTeacher ? '管理本班讲义，并直接核对已建立索引的知识片段。' : '查看、下载并检索教师为本班准备的教学材料。' }}</p>
         </div>
         <button v-if="isTeacher" class="button button--primary button--large" type="button" @click="openUpload">
           <AppIcon name="upload" />上传讲义
         </button>
       </header>
+
+      <section class="content-card lecture-search-card" aria-labelledby="lecture-search-title">
+        <div class="lecture-search-heading">
+          <div><h2 id="lecture-search-title">检索本班讲义</h2><p>直接查找原始知识片段，不经过智能体生成回答。</p></div>
+          <span class="class-scope-tag"><AppIcon name="shield" :size="14" />仅 {{ authState.user?.className }}</span>
+        </div>
+        <form class="lecture-search-form" @submit.prevent="searchMaterials">
+          <label class="lecture-search-input"><AppIcon name="search" /><span class="sr-only">检索讲义内容</span><input v-model="retrievalQuery" type="search" maxlength="1000" placeholder="输入知识点、题目或讲义原文关键词" /></label>
+          <label class="lecture-search-mode"><span class="sr-only">检索模式</span><select v-model="retrievalMode" aria-label="检索模式"><option value="hybrid">混合检索</option><option value="keyword">关键词检索</option><option value="vector">语义检索</option></select></label>
+          <button class="button button--primary" type="submit" :disabled="retrievalBusy || !retrievalQuery.trim()">{{ retrievalBusy ? '检索中…' : '开始检索' }}</button>
+        </form>
+        <p v-if="retrievalError" class="feedback feedback--error lecture-search-error" role="alert">{{ retrievalError }}</p>
+        <div v-if="retrievalResult" class="lecture-results" aria-live="polite">
+          <div class="lecture-results-summary"><strong>检索结果</strong><span>{{ retrievalResult.hits?.length ? `找到 ${retrievalResult.hits.length} 条依据` : '没有找到可用依据' }} · {{ retrievalResult.mode }}</span></div>
+          <ol v-if="retrievalResult.hits?.length" class="chat-hit-list">
+            <li v-for="(hit, hitIndex) in retrievalResult.hits" :key="hit.chunkId" class="chat-hit">
+              <span class="chat-hit-number">{{ hitIndex + 1 }}</span>
+              <div class="chat-hit-main">
+                <div class="chat-hit-title"><strong>{{ hit.materialTitle }}</strong><span>结果 {{ hitIndex + 1 }}</span></div>
+                <p>{{ hit.excerpt }}</p>
+                <details class="chat-hit-details"><summary>检索详情</summary><div class="chat-hit-meta"><span>处理文本位置 {{ hit.startOffset }}–{{ hit.endOffset }}</span><span>综合 {{ score(hit.finalScore) }}</span><span v-if="hit.keywordRank">关键词 #{{ hit.keywordRank }}</span><span v-if="hit.vectorRank">语义 #{{ hit.vectorRank }}</span></div></details>
+              </div>
+              <RouterLink :to="`/materials?material=${hit.materialId}&chunk=${hit.chunkId}`" @click="reopenCurrentHit(hit)">查看上下文</RouterLink>
+            </li>
+          </ol>
+          <div v-else class="chat-no-result"><AppIcon name="search" /><span>{{ retrievalResult.message || '资料中未找到相关内容' }}</span></div>
+        </div>
+      </section>
 
       <section class="summary-grid" aria-label="材料概览">
         <article class="summary-card">

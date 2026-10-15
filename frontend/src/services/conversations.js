@@ -6,6 +6,7 @@ export const getConversation = (id) => apiRequest(`/api/conversations/${id}`)
 export const createConversation = (assistantId) => apiRequest('/api/conversations', {
   method: 'POST', body: JSON.stringify({ assistantId }),
 })
+export const deleteConversation = (id) => apiRequest(`/api/conversations/${id}`, { method: 'DELETE' })
 
 /** 发送一轮对话并逐事件通知界面；首帧前错误仍按普通 JSON 错误处理。 */
 export async function streamConversationMessage(conversationId, content, onEvent) {

@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -60,5 +61,13 @@ public class AssistantController {
     @Operation(summary = "更新智能体", description = "仅教师可用；提交完整配置并原子替换绑定。")
     public AssistantView update(@PathVariable Long id, @Valid @RequestBody AssistantConfigRequest request) {
         return assistants.update(id, request, currentUsers.requireTeacher());
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "删除智能体", description = "仅教师可用；已有历史会话的智能体不能删除，可改为停用。")
+    @ApiResponse(responseCode = "409", description = "智能体已有历史会话")
+    public void delete(@PathVariable Long id) {
+        assistants.delete(id, currentUsers.requireTeacher());
     }
 }

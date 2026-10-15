@@ -32,15 +32,18 @@ public class ConversationService {
     private final ConversationMessageRepository messages;
     private final AssistantRepository assistants;
     private final ObjectMapper objectMapper;
+    private final ConversationCitationNormalizer citationNormalizer;
 
     public ConversationService(ConversationRepository conversations,
                                ConversationMessageRepository messages,
                                AssistantRepository assistants,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               ConversationCitationNormalizer citationNormalizer) {
         this.conversations = conversations;
         this.messages = messages;
         this.assistants = assistants;
         this.objectMapper = objectMapper;
+        this.citationNormalizer = citationNormalizer;
     }
 
     @Transactional
@@ -75,9 +78,17 @@ public class ConversationService {
         Assistant assistant = assistants.findByIdAndClassId(conversation.getAssistantId(), user.getClassId())
                 .orElseThrow(NotFoundException::new);
         List<MessageView> history = messages.findAllByConversationIdOrderByIdAsc(id).stream()
-                .map(message -> MessageView.from(message, readCitations(message.getCitationsJson())))
+                .map(this::messageView)
                 .toList();
         return ConversationView.detail(conversation, assistant.getName(), history);
+    }
+
+    /** 删除当前用户自己的会话；数据库外键负责级联清理消息。 */
+    @Transactional
+    public void delete(Long id, UserAccount user) {
+        Conversation conversation = requireOwned(id, user);
+        conversations.delete(conversation);
+        conversations.flush();
     }
 
     @Transactional(readOnly = true)
@@ -156,6 +167,18 @@ public class ConversationService {
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Stored message citations are invalid", exception);
         }
+    }
+
+    /** 旧会话可能保存了候选原编号，读取时也统一为最终展示编号。 */
+    private MessageView messageView(ConversationMessage message) {
+        List<ConversationCitation> citations = readCitations(message.getCitationsJson());
+        if (message.getRole() != MessageRole.ASSISTANT) {
+            return MessageView.from(message, citations);
+        }
+        ConversationCitationNormalizer.NormalizedAnswer normalized = citationNormalizer.normalize(
+                message.getContent(), citations);
+        return new MessageView(message.getId(), message.getRole().name().toLowerCase(), normalized.content(),
+                message.getSkillName(), normalized.citations(), message.getStatus().name(), message.getCreatedAt());
     }
 
     private String writeCitations(List<ConversationCitation> citations) {

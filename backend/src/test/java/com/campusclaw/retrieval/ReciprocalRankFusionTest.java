@@ -21,4 +21,16 @@ class ReciprocalRankFusionTest {
         var result = ReciprocalRankFusion.fuse(List.of(8L), List.of(7L), 60);
         assertThat(result).extracting(ReciprocalRankFusion.FusedRank::chunkId).containsExactly(7L, 8L);
     }
+
+    @Test
+    void candidateThatDominatesBothInputRanksCannotFallBehind() {
+        var result = ReciprocalRankFusion.fuse(
+                List.of(1L, 2L, 3L, 4L),
+                List.of(3L, 1L, 4L, 2L), 60);
+
+        assertThat(result).extracting(ReciprocalRankFusion.FusedRank::chunkId)
+                .containsSubsequence(1L, 2L);
+        assertThat(result.stream().filter(item -> item.chunkId().equals(1L)).findFirst().orElseThrow().score())
+                .isGreaterThan(result.stream().filter(item -> item.chunkId().equals(2L)).findFirst().orElseThrow().score());
+    }
 }

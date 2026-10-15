@@ -16,6 +16,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import org.springframework.stereotype.Service;
 
 /** 在发送首帧前完成授权、配置快照、消息落库、限定检索和上游连接。 */
@@ -58,7 +59,28 @@ public class AgentConversationService {
         SearchResponse search = retrieval.searchBound(question, user.getClassId(), materialIds, 4);
         List<HistoryMessage> history = conversations.historyBefore(conversationId, userMessage.getId());
         AgentTurnPlan plan = prompts.build(assistant, selectedSkill, search.hits(), history, question);
-        ChatGateway.ChatStream stream = chat.openStream(plan.messages());
+        // 严格 RAG：没有可靠候选时返回本地固定流，不能让模型凭参数知识自由回答。
+        ChatGateway.ChatStream stream = plan.citations().isEmpty()
+                ? new FixedTextStream(RetrievalService.NO_EVIDENCE)
+                : chat.openStream(plan.messages());
         return new AgentTurnPreparation(conversationId, user.getId(), user.getClassId(), plan, stream);
+    }
+
+    private static final class FixedTextStream implements ChatGateway.ChatStream {
+        private final String text;
+
+        private FixedTextStream(String text) {
+            this.text = text;
+        }
+
+        @Override
+        public void consume(Consumer<String> deltaConsumer) {
+            deltaConsumer.accept(text);
+        }
+
+        @Override
+        public void close() {
+            // 本地固定文本没有需要释放的连接。
+        }
     }
 }

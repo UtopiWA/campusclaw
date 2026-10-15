@@ -55,6 +55,17 @@ class SkillRouterTest {
         assertThat(router.route(5L, 2L, "阅读理解")).isEmpty();
     }
 
+    @Test
+    void broadExerciseGuideMatchesConcreteProblemButNotOrdinaryStatement() {
+        when(bindings.findAllByAssistantId(4L)).thenReturn(List.of(binding(4L, 8L)));
+        Skill guide = skill(8L, "学生提问各类习题");
+        when(guide.getName()).thenReturn("解题引导");
+        when(skills.findAllByIdInAndClassIdAndEnabledTrue(any(), eq(2L))).thenReturn(List.of(guide));
+
+        assertThat(router.route(4L, 2L, "已知 2x + 3 = 9，x 等于多少？")).contains(guide);
+        assertThat(router.route(4L, 2L, "今天我们学习了新的章节")).isEmpty();
+    }
+
     private AssistantSkill binding(Long assistantId, Long skillId) {
         return new AssistantSkill(assistantId, skillId);
     }

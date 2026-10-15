@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -12,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.campusclaw.auth.CurrentUserService;
 import com.campusclaw.common.ApiExceptionHandler;
+import com.campusclaw.common.ConflictException;
 import com.campusclaw.common.NotFoundException;
 import com.campusclaw.persistence.UserAccount;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -115,5 +117,21 @@ class AgentConfigurationControllerTest {
                                 """))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(assistants);
+    }
+
+    @Test
+    void deletesUnusedAssistantAndMapsConversationConflict() throws Exception {
+        UserAccount teacher = mock(UserAccount.class);
+        when(currentUsers.requireTeacher()).thenReturn(teacher);
+
+        mvc.perform(delete("/api/assistants/3"))
+                .andExpect(status().isNoContent());
+
+        org.mockito.Mockito.verify(assistants).delete(3L, teacher);
+        org.mockito.Mockito.doThrow(new ConflictException("该智能体已有会话记录，请停用智能体以保留历史会话"))
+                .when(assistants).delete(4L, teacher);
+        mvc.perform(delete("/api/assistants/4"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("该智能体已有会话记录，请停用智能体以保留历史会话"));
     }
 }

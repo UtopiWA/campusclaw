@@ -69,7 +69,7 @@ class QdrantIntegrationTest {
         return new AppProperties("./uploads", 1024,
                 new AppProperties.DemoSeed(false, ""), new AppProperties.Qdrant(url, "integration_chunks"),
                 new AppProperties.Embedding("http://localhost/v1", "key", "embed", dimension),
-                new AppProperties.Chat("http://localhost/v1", "key", "chat"),
+                new AppProperties.Chat("http://localhost/v1", "key", "chat", "none"),
                 new AppProperties.Retrieval(Duration.ofSeconds(2), Duration.ofSeconds(5),
                         1000, 10, 20, 0.35, 60, false));
     }

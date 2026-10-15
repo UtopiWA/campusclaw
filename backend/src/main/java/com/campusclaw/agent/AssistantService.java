@@ -1,6 +1,7 @@
 package com.campusclaw.agent;
 
 import com.campusclaw.common.BadRequestException;
+import com.campusclaw.common.ConflictException;
 import com.campusclaw.common.NotFoundException;
 import com.campusclaw.persistence.Assistant;
 import com.campusclaw.persistence.AssistantMaterial;
@@ -8,6 +9,9 @@ import com.campusclaw.persistence.AssistantMaterialRepository;
 import com.campusclaw.persistence.AssistantRepository;
 import com.campusclaw.persistence.AssistantSkill;
 import com.campusclaw.persistence.AssistantSkillRepository;
+import com.campusclaw.persistence.Conversation;
+import com.campusclaw.persistence.ConversationMessageRepository;
+import com.campusclaw.persistence.ConversationRepository;
 import com.campusclaw.persistence.MaterialRepository;
 import com.campusclaw.persistence.Role;
 import com.campusclaw.persistence.SkillRepository;
@@ -28,17 +32,23 @@ public class AssistantService {
     private final MaterialRepository materials;
     private final AssistantSkillRepository assistantSkills;
     private final AssistantMaterialRepository assistantMaterials;
+    private final ConversationRepository conversations;
+    private final ConversationMessageRepository conversationMessages;
 
     public AssistantService(AssistantRepository assistants,
                             SkillRepository skills,
                             MaterialRepository materials,
                             AssistantSkillRepository assistantSkills,
-                            AssistantMaterialRepository assistantMaterials) {
+                            AssistantMaterialRepository assistantMaterials,
+                            ConversationRepository conversations,
+                            ConversationMessageRepository conversationMessages) {
         this.assistants = assistants;
         this.skills = skills;
         this.materials = materials;
         this.assistantSkills = assistantSkills;
         this.assistantMaterials = assistantMaterials;
+        this.conversations = conversations;
+        this.conversationMessages = conversationMessages;
     }
 
     @Transactional(readOnly = true)
@@ -82,6 +92,29 @@ public class AssistantService {
             return view(assistant, true);
         } catch (DataIntegrityViolationException exception) {
             throw new BadRequestException("本班已存在同名智能体", exception);
+        }
+    }
+
+    /** 仅删除尚未产生历史消息的智能体，零消息空会话可一并清理。 */
+    @Transactional
+    public void delete(Long id, UserAccount teacher) {
+        Assistant assistant = assistants.findByIdAndClassId(id, teacher.getClassId())
+                .orElseThrow(NotFoundException::new);
+        List<Conversation> relatedConversations = conversations.findAllByAssistantId(assistant.getId());
+        boolean hasHistory = relatedConversations.stream()
+                .anyMatch(conversation -> conversationMessages.existsByConversationId(conversation.getId()));
+        if (hasHistory) {
+            throw new ConflictException("该智能体已有会话记录，请停用智能体以保留历史会话");
+        }
+        try {
+            // 零消息会话只是尚未使用的空壳，删除智能体前可安全清理。
+            conversations.deleteAll(relatedConversations);
+            conversations.flush();
+            assistants.delete(assistant);
+            assistants.flush();
+        } catch (DataIntegrityViolationException exception) {
+            // 并发创建会话时仍由数据库外键兜底，并统一转为可理解的资源冲突。
+            throw new ConflictException("该智能体已有会话记录，请停用智能体以保留历史会话");
         }
     }
 

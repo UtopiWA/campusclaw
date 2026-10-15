@@ -64,7 +64,7 @@ class AgentConversationServiceTest {
         Skill skill = mock(Skill.class);
         ConversationMessage userMessage = mock(ConversationMessage.class);
         ChatGateway.ChatStream stream = mock(ChatGateway.ChatStream.class);
-        AgentTurnPlan plan = new AgentTurnPlan("解题引导", List.of(),
+        AgentTurnPlan plan = new AgentTurnPlan("解题引导", List.of(citation()),
                 List.of(new ChatGateway.ChatMessage("system", "规则")));
         when(conversation.getAssistantId()).thenReturn(3L);
         when(assistant.getId()).thenReturn(3L);
@@ -126,7 +126,7 @@ class AgentConversationServiceTest {
         SearchResponse response = new SearchResponse(SearchMode.HYBRID, null, List.of());
         when(retrieval.searchBound("第一问", 2L, java.util.Set.of(11L), 4)).thenReturn(response);
         when(conversations.historyBefore(9L, 20L)).thenReturn(List.of());
-        AgentTurnPlan plan = new AgentTurnPlan(null, List.of(), List.of());
+        AgentTurnPlan plan = new AgentTurnPlan(null, List.of(citation()), List.of());
         when(prompts.build(assistant, Optional.empty(), List.of(), List.of(), "第一问")).thenReturn(plan);
         when(chat.openStream(plan.messages())).thenReturn(mock(ChatGateway.ChatStream.class));
 
@@ -141,5 +141,36 @@ class AgentConversationServiceTest {
         verify(conversations).saveUserMessage(9L, "第二问", user);
         verify(retrieval).searchBound("第二问", 2L, java.util.Set.of(12L), 4);
         verify(chat, org.mockito.Mockito.times(1)).openStream(any());
+    }
+
+    @Test
+    void returnsFixedNoEvidenceStreamWithoutCallingChatGateway() {
+        Conversation conversation = mock(Conversation.class);
+        Assistant assistant = mock(Assistant.class);
+        ConversationMessage userMessage = mock(ConversationMessage.class);
+        when(conversation.getAssistantId()).thenReturn(3L);
+        when(assistant.getId()).thenReturn(3L);
+        when(conversations.requireOwned(9L, user)).thenReturn(conversation);
+        when(assistants.findByIdAndClassId(3L, 2L)).thenReturn(Optional.of(assistant));
+        when(router.route(3L, 2L, "冷门问题")).thenReturn(Optional.empty());
+        when(materials.findAllByAssistantId(3L)).thenReturn(List.of(new AssistantMaterial(3L, 11L)));
+        when(conversations.saveUserMessage(9L, "冷门问题", user)).thenReturn(userMessage);
+        when(userMessage.getId()).thenReturn(20L);
+        when(retrieval.searchBound("冷门问题", 2L, java.util.Set.of(11L), 4))
+                .thenReturn(new SearchResponse(SearchMode.HYBRID, RetrievalService.NO_EVIDENCE, List.of()));
+        when(conversations.historyBefore(9L, 20L)).thenReturn(List.of());
+        AgentTurnPlan plan = new AgentTurnPlan(null, List.of(), List.of());
+        when(prompts.build(assistant, Optional.empty(), List.of(), List.of(), "冷门问题")).thenReturn(plan);
+
+        AgentTurnPreparation result = service.prepare(9L, "冷门问题", user);
+        StringBuilder output = new StringBuilder();
+        result.stream().consume(output::append);
+
+        assertThat(output).hasToString(RetrievalService.NO_EVIDENCE);
+        verifyNoInteractions(chat);
+    }
+
+    private ConversationCitation citation() {
+        return new ConversationCitation(1, 11L, "讲义", 21L, 0, "可靠片段");
     }
 }

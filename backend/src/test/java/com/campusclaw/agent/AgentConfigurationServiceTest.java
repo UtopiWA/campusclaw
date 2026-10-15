@@ -10,11 +10,15 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.campusclaw.common.BadRequestException;
+import com.campusclaw.common.ConflictException;
 import com.campusclaw.common.NotFoundException;
 import com.campusclaw.persistence.Assistant;
 import com.campusclaw.persistence.AssistantMaterialRepository;
 import com.campusclaw.persistence.AssistantRepository;
 import com.campusclaw.persistence.AssistantSkillRepository;
+import com.campusclaw.persistence.Conversation;
+import com.campusclaw.persistence.ConversationMessageRepository;
+import com.campusclaw.persistence.ConversationRepository;
 import com.campusclaw.persistence.Material;
 import com.campusclaw.persistence.MaterialRepository;
 import com.campusclaw.persistence.Skill;
@@ -73,6 +77,7 @@ class AgentConfigurationServiceTest {
         MaterialRepository materials = mock(MaterialRepository.class);
         AssistantSkillRepository assistantSkills = mock(AssistantSkillRepository.class);
         AssistantMaterialRepository assistantMaterials = mock(AssistantMaterialRepository.class);
+        ConversationRepository conversations = mock(ConversationRepository.class);
         Assistant assistant = mock(Assistant.class);
         UserAccount teacher = mock(UserAccount.class);
         when(teacher.getClassId()).thenReturn(1L);
@@ -80,7 +85,8 @@ class AgentConfigurationServiceTest {
         when(skills.findAllByIdInAndClassId(Set.of(8L), 1L)).thenReturn(List.of(mock(Skill.class)));
         when(materials.findAllByIdInAndClassId(Set.of(12L), 1L)).thenReturn(List.of());
         AssistantService service = new AssistantService(
-                assistants, skills, materials, assistantSkills, assistantMaterials);
+                assistants, skills, materials, assistantSkills, assistantMaterials, conversations,
+                mock(ConversationMessageRepository.class));
 
         assertThatThrownBy(() -> service.update(5L,
                 new AssistantConfigRequest("新名称", "提示", true, Set.of(8L), Set.of(12L)), teacher))
@@ -97,6 +103,7 @@ class AgentConfigurationServiceTest {
         MaterialRepository materials = mock(MaterialRepository.class);
         AssistantSkillRepository assistantSkills = mock(AssistantSkillRepository.class);
         AssistantMaterialRepository assistantMaterials = mock(AssistantMaterialRepository.class);
+        ConversationRepository conversations = mock(ConversationRepository.class);
         Assistant assistant = mock(Assistant.class);
         UserAccount teacher = mock(UserAccount.class);
         when(teacher.getClassId()).thenReturn(1L);
@@ -108,7 +115,8 @@ class AgentConfigurationServiceTest {
         when(skills.findAllByIdInAndClassId(Set.of(8L), 1L)).thenReturn(List.of(mock(Skill.class)));
         when(materials.findAllByIdInAndClassId(Set.of(12L), 1L)).thenReturn(List.of(mock(Material.class)));
         AssistantService service = new AssistantService(
-                assistants, skills, materials, assistantSkills, assistantMaterials);
+                assistants, skills, materials, assistantSkills, assistantMaterials, conversations,
+                mock(ConversationMessageRepository.class));
 
         AssistantView view = service.update(5L,
                 new AssistantConfigRequest("新名称", "提示", true, Set.of(8L), Set.of(12L)), teacher);
@@ -119,6 +127,58 @@ class AgentConfigurationServiceTest {
         verify(assistantMaterials).deleteAllByAssistantId(5L);
         verify(assistantSkills).saveAll(any());
         verify(assistantMaterials).saveAll(any());
+    }
+
+    @Test
+    void assistantDeleteRejectsExistingConversationWithoutMutation() {
+        AssistantRepository assistants = mock(AssistantRepository.class);
+        Assistant assistant = mock(Assistant.class);
+        Conversation conversation = mock(Conversation.class);
+        ConversationRepository conversations = mock(ConversationRepository.class);
+        ConversationMessageRepository conversationMessages = mock(ConversationMessageRepository.class);
+        UserAccount teacher = mock(UserAccount.class);
+        when(teacher.getClassId()).thenReturn(1L);
+        when(assistants.findByIdAndClassId(5L, 1L)).thenReturn(Optional.of(assistant));
+        when(assistant.getId()).thenReturn(5L);
+        when(conversation.getId()).thenReturn(11L);
+        when(conversations.findAllByAssistantId(5L)).thenReturn(List.of(conversation));
+        when(conversationMessages.existsByConversationId(11L)).thenReturn(true);
+        AssistantService service = new AssistantService(assistants, mock(SkillRepository.class),
+                mock(MaterialRepository.class), mock(AssistantSkillRepository.class),
+                mock(AssistantMaterialRepository.class), conversations, conversationMessages);
+
+        assertThatThrownBy(() -> service.delete(5L, teacher))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("停用");
+
+        verify(assistants, never()).delete(any());
+        verify(conversations, never()).deleteAll(any());
+    }
+
+    @Test
+    void assistantDeleteRemovesEmptyConversationShellAndUnusedAssistant() {
+        AssistantRepository assistants = mock(AssistantRepository.class);
+        Assistant assistant = mock(Assistant.class);
+        Conversation conversation = mock(Conversation.class);
+        ConversationRepository conversations = mock(ConversationRepository.class);
+        ConversationMessageRepository conversationMessages = mock(ConversationMessageRepository.class);
+        UserAccount teacher = mock(UserAccount.class);
+        when(teacher.getClassId()).thenReturn(1L);
+        when(assistants.findByIdAndClassId(5L, 1L)).thenReturn(Optional.of(assistant));
+        when(assistant.getId()).thenReturn(5L);
+        when(conversation.getId()).thenReturn(11L);
+        when(conversations.findAllByAssistantId(5L)).thenReturn(List.of(conversation));
+        when(conversationMessages.existsByConversationId(11L)).thenReturn(false);
+        AssistantService service = new AssistantService(assistants, mock(SkillRepository.class),
+                mock(MaterialRepository.class), mock(AssistantSkillRepository.class),
+                mock(AssistantMaterialRepository.class), conversations, conversationMessages);
+
+        service.delete(5L, teacher);
+
+        verify(conversations).deleteAll(List.of(conversation));
+        verify(conversations).flush();
+        verify(assistants).delete(assistant);
+        verify(assistants).flush();
     }
 
     private static String validSkillSource(String name) {

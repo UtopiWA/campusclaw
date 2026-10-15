@@ -31,7 +31,8 @@ class ConversationStreamingServiceTest {
         when(conversations.saveAssistantMessage(
                 eq(9L), eq(6L), eq(2L), eq("第一段"), eq("阅读"), any(), eq(MessageStatus.COMPLETED)))
                 .thenReturn(saved);
-        ConversationStreamingService service = new ConversationStreamingService(conversations, new ObjectMapper());
+        ConversationStreamingService service = new ConversationStreamingService(
+                conversations, new ObjectMapper(), new ConversationCitationNormalizer());
         AgentTurnPreparation preparation = preparation("阅读", List.of(), consumer -> {
             consumer.accept("第一");
             consumer.accept("段");
@@ -50,7 +51,8 @@ class ConversationStreamingServiceTest {
     @Test
     void persistsPartialTextAsFailedAndEndsWithErrorWithoutDone() {
         ConversationService conversations = mock(ConversationService.class);
-        ConversationStreamingService service = new ConversationStreamingService(conversations, new ObjectMapper());
+        ConversationStreamingService service = new ConversationStreamingService(
+                conversations, new ObjectMapper(), new ConversationCitationNormalizer());
         AgentTurnPreparation preparation = preparation("阅读", List.of(), consumer -> {
             consumer.accept("部分正文");
             throw new DependencyUnavailableException("Chat service");
@@ -74,7 +76,8 @@ class ConversationStreamingServiceTest {
         when(conversations.saveAssistantMessage(
                 eq(9L), eq(6L), eq(2L), eq("无依据回答。"), eq(null), any(), eq(MessageStatus.COMPLETED)))
                 .thenReturn(saved);
-        ConversationStreamingService service = new ConversationStreamingService(conversations, new ObjectMapper());
+        ConversationStreamingService service = new ConversationStreamingService(
+                conversations, new ObjectMapper(), new ConversationCitationNormalizer());
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         service.stream(preparation(null, List.of(), consumer -> {
             consumer.accept("无依据[");
@@ -87,7 +90,8 @@ class ConversationStreamingServiceTest {
 
         ConversationService emptyConversations = mock(ConversationService.class);
         ByteArrayOutputStream failed = new ByteArrayOutputStream();
-        new ConversationStreamingService(emptyConversations, new ObjectMapper()).stream(
+        new ConversationStreamingService(emptyConversations, new ObjectMapper(),
+                new ConversationCitationNormalizer()).stream(
                 preparation(null, List.of(), consumer -> {
                     throw new DependencyUnavailableException("Chat service");
                 }), failed);
@@ -106,7 +110,8 @@ class ConversationStreamingServiceTest {
                 .thenThrow(new IllegalStateException("database details"));
         ByteArrayOutputStream output = new ByteArrayOutputStream();
 
-        new ConversationStreamingService(conversations, new ObjectMapper()).stream(
+        new ConversationStreamingService(conversations, new ObjectMapper(),
+                new ConversationCitationNormalizer()).stream(
                 preparation("阅读", List.of(), consumer -> consumer.accept("完整正文")), output);
 
         assertThat(output.toString(StandardCharsets.UTF_8))
@@ -117,7 +122,8 @@ class ConversationStreamingServiceTest {
     @Test
     void persistsPartialTextWhenClientDisconnectsAfterDelta() {
         ConversationService conversations = mock(ConversationService.class);
-        ConversationStreamingService service = new ConversationStreamingService(conversations, new ObjectMapper());
+        ConversationStreamingService service = new ConversationStreamingService(
+                conversations, new ObjectMapper(), new ConversationCitationNormalizer());
         OutputStream output = new OutputStream() {
             private final ByteArrayOutputStream delegate = new ByteArrayOutputStream();
             private int frames;
@@ -138,6 +144,28 @@ class ConversationStreamingServiceTest {
                 9L, 6L, 2L, "部分正文", "阅读", List.of(), MessageStatus.FAILED);
         verify(conversations, never()).saveAssistantMessage(
                 eq(9L), eq(6L), eq(2L), any(), any(), any(), eq(MessageStatus.COMPLETED));
+    }
+
+    @Test
+    void persistsOnlyReferencedCitationsWithFinalContinuousNumbers() {
+        ConversationService conversations = mock(ConversationService.class);
+        ConversationMessage saved = mock(ConversationMessage.class);
+        when(saved.getId()).thenReturn(89L);
+        ConversationCitation originalFourth = new ConversationCitation(
+                4, 7L, "函数讲义", 44L, 3, "定义域片段");
+        ConversationCitation finalFirst = new ConversationCitation(
+                1, 7L, "函数讲义", 44L, 3, "定义域片段");
+        when(conversations.saveAssistantMessage(
+                9L, 6L, 2L, "结论[1]", null, List.of(finalFirst), MessageStatus.COMPLETED))
+                .thenReturn(saved);
+        ConversationStreamingService service = new ConversationStreamingService(
+                conversations, new ObjectMapper(), new ConversationCitationNormalizer());
+
+        service.stream(preparation(null, List.of(originalFourth), consumer -> consumer.accept("结论[4]")),
+                new ByteArrayOutputStream());
+
+        verify(conversations).saveAssistantMessage(
+                9L, 6L, 2L, "结论[1]", null, List.of(finalFirst), MessageStatus.COMPLETED);
     }
 
     private AgentTurnPreparation preparation(String skillName, List<ConversationCitation> citations,

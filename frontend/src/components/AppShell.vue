@@ -12,21 +12,20 @@ const router = useRouter()
 const isTeacher = computed(() => authState.user?.role === 'teacher')
 const roleLabel = computed(() => isTeacher.value ? '教师' : '学生')
 
-// One role-aware definition keeps the shared shell stable; entries without `to` reserve future course modules.
+// 统一导航避免讲义检索与智能体问答出现两个职责重叠的入口。
 const navItems = computed(() => isTeacher.value
   ? [
       { key: 'home', label: '教师首页', icon: 'home' },
-      { key: 'materials', label: '讲义管理', icon: 'book', to: '/materials' },
-      { key: 'search', label: '知识检索', icon: 'search', to: '/search' },
-      { key: 'assistant', label: '助手配置', icon: 'bot', to: '/assistants' },
+      { key: 'materials', label: '讲义与检索', icon: 'book', to: '/materials' },
+      { key: 'assistant-chat', label: '助手对话', icon: 'bot', to: '/conversations' },
+      { key: 'assistant-config', label: '助手配置', icon: 'layers', to: '/assistants' },
       { key: 'homework', label: '作业与改分', icon: 'homework' },
       { key: 'audit', label: '审计与统计', icon: 'audit' },
     ]
   : [
       { key: 'home', label: '学生首页', icon: 'home' },
-      { key: 'materials', label: '讲义资料', icon: 'book', to: '/materials' },
-      { key: 'search', label: '知识检索', icon: 'search', to: '/search' },
-      { key: 'assistant', label: '助手对话', icon: 'bot', to: '/conversations' },
+      { key: 'materials', label: '讲义与检索', icon: 'book', to: '/materials' },
+      { key: 'assistant-chat', label: '助手对话', icon: 'bot', to: '/conversations' },
       { key: 'homework', label: '交作业', icon: 'homework' },
       { key: 'audit', label: '学情分析', icon: 'audit' },
     ])

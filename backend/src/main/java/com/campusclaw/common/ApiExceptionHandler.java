@@ -25,6 +25,11 @@ public class ApiExceptionHandler {
         return error(HttpStatus.NOT_FOUND, "Resource not found");
     }
 
+    @ExceptionHandler(ConflictException.class)
+    ResponseEntity<Map<String, String>> conflict(ConflictException exception) {
+        return error(HttpStatus.CONFLICT, exception.getMessage());
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<Map<String, String>> forbidden() {
         return error(HttpStatus.FORBIDDEN, "Forbidden");

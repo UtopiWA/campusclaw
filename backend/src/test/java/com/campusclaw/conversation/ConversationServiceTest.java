@@ -39,7 +39,8 @@ class ConversationServiceTest {
         conversations = mock(ConversationRepository.class);
         messages = mock(ConversationMessageRepository.class);
         assistants = mock(AssistantRepository.class);
-        service = new ConversationService(conversations, messages, assistants, new ObjectMapper());
+        service = new ConversationService(
+                conversations, messages, assistants, new ObjectMapper(), new ConversationCitationNormalizer());
         user = mock(UserAccount.class);
         when(user.getId()).thenReturn(4L);
         when(user.getClassId()).thenReturn(7L);
@@ -75,9 +76,9 @@ class ConversationServiceTest {
         when(messages.findAllByConversationIdOrderByIdAsc(8L)).thenReturn(List.of(message));
         when(message.getRole()).thenReturn(MessageRole.ASSISTANT);
         when(message.getStatus()).thenReturn(MessageStatus.COMPLETED);
-        when(message.getContent()).thenReturn("回答[1]");
+        when(message.getContent()).thenReturn("回答[4]");
         when(message.getCitationsJson()).thenReturn("""
-                [{"number":1,"materialId":2,"materialTitle":"讲义","chunkId":5,
+                [{"number":4,"materialId":2,"materialTitle":"讲义","chunkId":5,
                   "chunkIndex":0,"excerpt":"片段"}]
                 """);
         when(conversations.findByIdAndUserIdAndClassId(8L, 4L, 7L)).thenReturn(Optional.of(conversation));
@@ -86,8 +87,12 @@ class ConversationServiceTest {
         ConversationView result = service.get(8L, user);
 
         assertThat(result.messages()).hasSize(1);
+        assertThat(result.messages().get(0).content()).isEqualTo("回答[1]");
         assertThat(result.messages().get(0).citations()).singleElement()
-                .satisfies(citation -> assertThat(citation.materialTitle()).isEqualTo("讲义"));
+                .satisfies(citation -> {
+                    assertThat(citation.number()).isEqualTo(1);
+                    assertThat(citation.materialTitle()).isEqualTo("讲义");
+                });
 
         when(conversations.findByIdAndUserIdAndClassId(99L, 4L, 7L)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.get(99L, user)).isInstanceOf(NotFoundException.class);
@@ -153,6 +158,19 @@ class ConversationServiceTest {
 
         assertThat(service.get(8L, user).assistantName()).isEqualTo("已停用助手");
         assertThatThrownBy(() -> service.create(3L, user)).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void deletesOnlyAnOwnedConversation() {
+        Conversation owned = mock(Conversation.class);
+        when(conversations.findByIdAndUserIdAndClassId(8L, 4L, 7L)).thenReturn(Optional.of(owned));
+
+        service.delete(8L, user);
+
+        verify(conversations).delete(owned);
+        verify(conversations).flush();
+        when(conversations.findByIdAndUserIdAndClassId(9L, 4L, 7L)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.delete(9L, user)).isInstanceOf(NotFoundException.class);
     }
 
     private ConversationMessage message(MessageRole role, String content) {

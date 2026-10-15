@@ -9,12 +9,20 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** 只在当前绑定技能内执行可重复的词法计分，每轮最多选择一项。 */
 @Service
 public class SkillRouter {
+    private static final Set<String> EXERCISE_CATEGORIES = Set.of("习题", "题目", "题型", "练习", "解题");
+    private static final Pattern EXERCISE_WORDS = Pattern.compile(
+            "求出|求解|求证|计算|证明|化简|解方程|怎么做|如何解|下列|选择题|填空题|"
+                    + "已知|若.+则|多少|答案|结果|方程|函数|几何");
+    private static final Pattern MATH_EXPRESSION = Pattern.compile(
+            ".*(?:\\d\\s*[+\\-×÷*/=<>]|[+\\-×÷*/=<>]\\s*\\d|[a-z]\\s*[=+\\-*/^]).*",
+            Pattern.CASE_INSENSITIVE);
     private final AssistantSkillRepository assistantSkills;
     private final SkillRepository skills;
 
@@ -55,7 +63,21 @@ public class SkillRouter {
                 score++;
             }
         }
+        if (score == 0 && isBroadExerciseGuide(skill, distinct) && looksLikeExercise(normalizedQuestion)) {
+            score = 1;
+        }
         return score;
+    }
+
+    /** 将“各类习题”这类类别条件映射到固定题目特征，仍保持完全可重复的服务端路由。 */
+    private boolean isBroadExerciseGuide(Skill skill, Set<String> triggers) {
+        String name = skill.getName() == null ? "" : skill.getName();
+        return name.contains("解题引导") && triggers.stream()
+                .anyMatch(trigger -> EXERCISE_CATEGORIES.stream().anyMatch(trigger::contains));
+    }
+
+    private boolean looksLikeExercise(String question) {
+        return EXERCISE_WORDS.matcher(question).find() || MATH_EXPRESSION.matcher(question).matches();
     }
 
     private record ScoredSkill(Skill skill, int score) {
