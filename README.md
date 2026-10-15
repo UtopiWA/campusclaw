@@ -194,7 +194,7 @@ Set-Location ..\backend
 
 Set-Location ..
 docker compose --env-file .env config --quiet
-openspec validate add-agent-conversations-and-streaming --strict
+openspec validate --all --strict
 
 python apitest/run_all.py
 ```

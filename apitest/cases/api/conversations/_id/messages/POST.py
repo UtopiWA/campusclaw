@@ -1,6 +1,7 @@
 """验证流式会话事件、引用和最终消息持久化。"""
 
 import json
+import re
 
 from common.assertions import require, require_equal, require_list, require_mapping
 
@@ -74,13 +75,25 @@ def run(context) -> None:
     require_equal(user_message["status"], "COMPLETED", "用户消息状态应为 COMPLETED")
     require_equal(assistant_message["id"], message_id, "done ID 应指向已提交助手消息")
     require_equal(assistant_message["role"], "ASSISTANT", "第二条消息应为助手消息")
-    require_equal(assistant_message["content"], answer, "MySQL 助手正文应等于全部 delta 拼接结果")
+    # 完成阶段允许过滤、重编号或补齐引用标记，但不得改写引用之外的回答正文。
+    streamed_plain_text = re.sub(r"\s*\[\d+]", "", answer).strip()
+    stored_plain_text = re.sub(r"\s*\[\d+]", "", assistant_message["content"]).strip()
+    require_equal(stored_plain_text, streamed_plain_text, "MySQL 助手正文除引用标记外应等于全部 delta 拼接结果")
     require_equal(assistant_message["skill_name"], skill["name"], "MySQL 应记录命中技能")
     require_equal(assistant_message["status"], "COMPLETED", "助手消息状态应为 COMPLETED")
     stored_citations = assistant_message["citations_json"]
     if isinstance(stored_citations, str):
         stored_citations = json.loads(stored_citations)
-    require_equal(stored_citations, citations, "MySQL 引用快照应与 meta 一致")
+    require(isinstance(stored_citations, list), "MySQL 引用快照应为数组")
+    candidate_keys = {(item.get("materialId"), item.get("chunkId")) for item in citations}
+    for number, raw_citation in enumerate(stored_citations, start=1):
+        citation = require_mapping(raw_citation, "MySQL 每条最终引用应为 JSON 对象")
+        require_equal(citation.get("number"), number, "MySQL 最终引用编号应从 1 连续排列")
+        require((citation.get("materialId"), citation.get("chunkId")) in candidate_keys,
+                "MySQL 最终引用必须来自本轮 meta 候选")
+    referenced_numbers = {int(value) for value in re.findall(r"\[(\d+)]", assistant_message["content"])}
+    require_equal(referenced_numbers, set(range(1, len(stored_citations) + 1)),
+                  "MySQL 最终正文引用编号应与最终引用快照一致")
 
     conversation = context.db.query_one(
         "SELECT user_id, class_id, title FROM conversations WHERE id = %s", (conversation_id,)
