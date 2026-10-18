@@ -2,17 +2,22 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../services/api.js'
 
-const { agents, authState } = vi.hoisted(() => ({
+const { agents, mcp, authState } = vi.hoisted(() => ({
   agents: {
     listAssistants: vi.fn(), getAssistant: vi.fn(), createAssistant: vi.fn(), updateAssistant: vi.fn(),
     deleteAssistant: vi.fn(),
     listSkills: vi.fn(), createSkill: vi.fn(), updateSkill: vi.fn(), deleteSkill: vi.fn(),
     listMaterials: vi.fn(),
   },
+  mcp: {
+    listMcpServers: vi.fn(), createMcpServer: vi.fn(), updateMcpServer: vi.fn(), deleteMcpServer: vi.fn(),
+    connectMcpServer: vi.fn(), disconnectMcpServer: vi.fn(), listMcpTools: vi.fn(), listMcpToolCalls: vi.fn(),
+  },
   authState: { user: { username: 'teacher-a', role: 'teacher', className: '班级 A' }, loaded: true },
 }))
 
 vi.mock('../services/agents.js', () => agents)
+vi.mock('../services/mcp.js', () => mcp)
 vi.mock('../services/auth.js', () => ({ authState, logout: vi.fn() }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ replace: vi.fn() }) }))
 
@@ -31,9 +36,12 @@ async function fillSkillForm(wrapper, values = {}) {
 describe('AgentConfigView', () => {
   beforeEach(() => {
     Object.values(agents).forEach((mock) => mock.mockReset())
+    Object.values(mcp).forEach((mock) => mock.mockReset())
     agents.listAssistants.mockResolvedValue([])
     agents.listSkills.mockResolvedValue([])
     agents.listMaterials.mockResolvedValue([])
+    mcp.listMcpServers.mockResolvedValue([])
+    mcp.listMcpToolCalls.mockResolvedValue([])
   })
 
   it('submits complete de-duplicated assistant bindings and only offers READY materials', async () => {
@@ -278,6 +286,54 @@ describe('AgentConfigView', () => {
     expect(wrapper.text()).toContain('智能体状态保存失败')
     expect(wrapper.text()).toContain('已启用')
     expect(wrapper.findAll('.config-actions .button').some((button) => button.text() === '停用')).toBe(true)
+  })
+
+  it('shows discovered MCP tool schemas and audit summaries without exposing credentials', async () => {
+    mcp.listMcpServers.mockResolvedValue([{
+      id: 21, name: 'demo', baseUrl: 'http://mcp-demo:8090/mcp', connected: true,
+      hasAuth: true, toolCount: 1,
+    }])
+    mcp.listMcpTools.mockResolvedValue([{
+      id: 31, name: 'unit_convert', description: 'Convert supported units.',
+      inputSchema: { properties: { value: {}, fromUnit: {}, toUnit: {} }, required: ['value', 'fromUnit', 'toUnit'] },
+    }])
+    mcp.listMcpToolCalls.mockResolvedValue([{
+      id: 41, toolRef: 'unit_convert@demo', status: 'ok', detail: '2 km = 2000 m', createdAt: '2026-10-16T10:00:00Z',
+    }])
+
+    const wrapper = mount(AgentConfigView, { global })
+    await flushPromises()
+    await wrapper.findAll('.config-tabs button')[2].trigger('click')
+
+    expect(wrapper.text()).toContain('unit_convert')
+    expect(wrapper.text()).toContain('Convert supported units.')
+    expect(wrapper.text()).toContain('value*、fromUnit*、toUnit*')
+    expect(wrapper.text()).toContain('2 km = 2000 m')
+    expect(wrapper.text()).not.toContain('secret-token')
+  })
+
+  it('submits an MCP token once and never repopulates it while editing', async () => {
+    const server = { id: 21, name: 'demo', baseUrl: 'http://mcp-demo:8090/mcp', connected: false, hasAuth: true, toolCount: 0 }
+    mcp.listMcpServers.mockResolvedValue([server])
+    mcp.createMcpServer.mockResolvedValue(server)
+    const wrapper = mount(AgentConfigView, { global })
+    await flushPromises()
+    await wrapper.findAll('.config-tabs button')[2].trigger('click')
+    await wrapper.find('.page-heading .button--primary').trigger('click')
+
+    const form = wrapper.find('#mcp-form')
+    const inputs = form.findAll('input')
+    await inputs[0].setValue('demo-two')
+    await inputs[1].setValue('http://mcp-demo:8090')
+    await inputs[2].setValue('secret-token')
+    await form.trigger('submit')
+    await flushPromises()
+
+    expect(mcp.createMcpServer).toHaveBeenCalledWith({
+      name: 'demo-two', baseUrl: 'http://mcp-demo:8090', token: 'secret-token',
+    })
+    await wrapper.find('[aria-label="编辑 MCP 服务"]').trigger('click')
+    expect(wrapper.find('#mcp-form input[type="password"]').element.value).toBe('')
   })
 
   it('keeps the assistant delete dialog open when history causes a conflict', async () => {

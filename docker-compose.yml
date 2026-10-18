@@ -31,6 +31,20 @@ services:
       retries: 20
       start_period: 10s
 
+  mcp-demo:
+    build:
+      context: ./mcp-server
+    restart: unless-stopped
+    environment:
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN}
+      MCP_PORT: 8090
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
   backend:
     build:
       context: ./backend
@@ -57,12 +71,18 @@ services:
       CHAT_REASONING_EFFORT: ${CHAT_REASONING_EFFORT-none}
       RETRIEVAL_CONNECT_TIMEOUT: ${RETRIEVAL_CONNECT_TIMEOUT:-3s}
       RETRIEVAL_READ_TIMEOUT: ${RETRIEVAL_READ_TIMEOUT:-30s}
+      MCP_TOKEN_ENCRYPTION_KEY: ${MCP_TOKEN_ENCRYPTION_KEY}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-mcp-demo}
+      MCP_CONNECT_TIMEOUT: ${MCP_CONNECT_TIMEOUT:-3s}
+      MCP_READ_TIMEOUT: ${MCP_READ_TIMEOUT:-10s}
     volumes:
       - uploads-data:/app/uploads
     depends_on:
       mysql:
         condition: service_healthy
       qdrant:
+        condition: service_healthy
+      mcp-demo:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]

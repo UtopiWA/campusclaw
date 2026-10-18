@@ -28,7 +28,7 @@ class SkillTextParserTest {
         assertThat(result.name()).isEqualTo("数学解题引导");
         assertThat(result.triggers()).containsExactly("方程", "去括号", "分数", "通分", "面积", "应用题");
         assertThat(result.materialScope()).isEqualTo("数学");
-        assertThat(result.toolName()).isEqualTo("knowledge_search");
+        assertThat(result.toolRefs()).containsExactly("knowledge_search");
         assertThat(result.enabled()).isTrue();
         assertThat(result.instructions()).isEqualTo("只指出下一步。\n不要给最终答案。");
         assertThat(result.sourceText()).isEqualTo(source);
@@ -40,7 +40,7 @@ class SkillTextParserTest {
 
         assertThat(result.triggers()).containsExactly("阅读", "段落");
         assertThat(result.materialScope()).isEmpty();
-        assertThat(result.toolName()).isEqualTo("knowledge_search");
+        assertThat(result.toolRefs()).containsExactly("knowledge_search");
         assertThat(result.enabled()).isFalse();
         assertThat(result.instructions()).isEqualTo("逐段提示。");
     }

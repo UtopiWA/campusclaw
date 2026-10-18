@@ -66,3 +66,8 @@ app:
     vector-threshold: ${RETRIEVAL_VECTOR_THRESHOLD:0.35}
     rrf-k: ${RETRIEVAL_RRF_K:60}
     initialize-vector-store: ${RETRIEVAL_INITIALIZE_VECTOR_STORE:true}
+  mcp:
+    token-encryption-key: ${MCP_TOKEN_ENCRYPTION_KEY}
+    allowed-hosts: ${MCP_ALLOWED_HOSTS:mcp-demo}
+    connect-timeout: ${MCP_CONNECT_TIMEOUT:3s}
+    read-timeout: ${MCP_READ_TIMEOUT:10s}

@@ -10,6 +10,8 @@ import com.campusclaw.persistence.Conversation;
 import com.campusclaw.persistence.ConversationMessage;
 import com.campusclaw.persistence.Skill;
 import com.campusclaw.persistence.UserAccount;
+import com.campusclaw.mcp.McpToolOrchestrator;
+import com.campusclaw.mcp.McpTurnResult;
 import com.campusclaw.retrieval.RetrievalService;
 import com.campusclaw.retrieval.SearchResponse;
 import java.util.LinkedHashSet;
@@ -29,6 +31,7 @@ public class AgentConversationService {
     private final RetrievalService retrieval;
     private final AgentPromptBuilder prompts;
     private final ChatGateway chat;
+    private final McpToolOrchestrator mcpTools;
 
     public AgentConversationService(ConversationService conversations,
                                     AssistantRepository assistants,
@@ -36,7 +39,8 @@ public class AgentConversationService {
                                     SkillRouter skillRouter,
                                     RetrievalService retrieval,
                                     AgentPromptBuilder prompts,
-                                    ChatGateway chat) {
+                                    ChatGateway chat,
+                                    McpToolOrchestrator mcpTools) {
         this.conversations = conversations;
         this.assistants = assistants;
         this.assistantMaterials = assistantMaterials;
@@ -44,6 +48,7 @@ public class AgentConversationService {
         this.retrieval = retrieval;
         this.prompts = prompts;
         this.chat = chat;
+        this.mcpTools = mcpTools;
     }
 
     public AgentTurnPreparation prepare(Long conversationId, String question, UserAccount user) {
@@ -57,10 +62,11 @@ public class AgentConversationService {
 
         ConversationMessage userMessage = conversations.saveUserMessage(conversationId, question, user);
         SearchResponse search = retrieval.searchBound(question, user.getClassId(), materialIds, 4);
+        McpTurnResult toolResult = mcpTools.invoke(selectedSkill, question, conversationId, user);
         List<HistoryMessage> history = conversations.historyBefore(conversationId, userMessage.getId());
-        AgentTurnPlan plan = prompts.build(assistant, selectedSkill, search.hits(), history, question);
-        // 严格 RAG：没有可靠候选时返回本地固定流，不能让模型凭参数知识自由回答。
-        ChatGateway.ChatStream stream = plan.citations().isEmpty()
+        AgentTurnPlan plan = prompts.build(assistant, selectedSkill, search.hits(), toolResult, history, question);
+        // 材料或安全工具结果任一存在即可生成；两者均为空时继续使用固定无依据答复。
+        ChatGateway.ChatStream stream = plan.citations().isEmpty() && !toolResult.hasUsableContext()
                 ? new FixedTextStream(RetrievalService.NO_EVIDENCE)
                 : chat.openStream(plan.messages());
         return new AgentTurnPreparation(conversationId, user.getId(), user.getClassId(), plan, stream);

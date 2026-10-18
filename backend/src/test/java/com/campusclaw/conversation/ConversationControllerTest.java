@@ -133,7 +133,7 @@ class ConversationControllerTest {
         MessageView message = new MessageView(
                 12L, "assistant", "结论 [1]", "解题引导",
                 List.of(new ConversationCitation(1, 7L, "函数讲义", 42L, 0, "引用片段")),
-                "FAILED", null);
+                List.of(), "FAILED", null);
         ConversationView detail = new ConversationView(
                 9L, "函数问题", 3L, "数学助手", null, null, List.of(message));
         when(conversations.list(user)).thenReturn(List.of(summary));

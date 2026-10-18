@@ -80,12 +80,12 @@ public class ConversationController {
     @PostMapping(value = "/{id}/messages", consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "发送消息并流式生成回答",
-            description = "SSE 事件顺序为 meta、零到多个 delta、done；失败以 error 或连接中断结束。")
+            description = "SSE 事件顺序为 meta、零到多个 delta、done；失败以 error 或连接中断结束。meta.toolCalls 是可选的有序安全摘要，没有 MCP 引用时省略。")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "UTF-8 SSE 事件流",
                     content = @Content(mediaType = MediaType.TEXT_EVENT_STREAM_VALUE,
                             schema = @Schema(type = "string"),
-                            examples = @ExampleObject(value = "event: meta\\ndata: {\"status\":\"ready\",\"skillName\":null,\"citations\":[]}\\n\\nevent: delta\\ndata: {\"text\":\"回答\"}\\n\\nevent: done\\ndata: {\"messageId\":1}\\n\\n"))),
+                            examples = @ExampleObject(value = "event: meta\\ndata: {\"status\":\"ready\",\"skillName\":\"单位换算\",\"citations\":[],\"toolCalls\":[{\"ref\":\"unit_convert@demo\",\"status\":\"ok\",\"detail\":\"2 km = 2000 m\"}]}\\n\\nevent: delta\\ndata: {\"text\":\"回答\"}\\n\\nevent: done\\ndata: {\"messageId\":1}\\n\\n"))),
             @ApiResponse(responseCode = "400", description = "问题不合法"),
             @ApiResponse(responseCode = "401", description = "未登录"),
             @ApiResponse(responseCode = "403", description = "无权限"),

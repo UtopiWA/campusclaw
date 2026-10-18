@@ -107,6 +107,7 @@ function streamMessage(event, assistantMessage, renderer, streamState) {
     assistantMessage.phase = 'GENERATING'
     // meta 中的是候选而不是最终采用引用；正文完成前不展示引用卡片。
     assistantMessage.pendingCitations = event.data.citations || []
+    assistantMessage.toolCalls = event.data.toolCalls || []
   } else if (event.event === 'delta') {
     assistantMessage.phase = 'ANSWERING'
     renderer.enqueue(event.data.text)
@@ -170,6 +171,7 @@ async function send(content = question.value) {
   const assistantMessage = reactive({
     id: `local-assistant-${Date.now()}`, role: 'assistant', content: '', citations: [],
     pendingCitations: [], skillName: null, status: 'STREAMING', phase: 'RETRIEVING',
+    toolCalls: [],
     retryQuestion: value, error: '',
   })
   const streamState = { messageId: null, error: '' }
@@ -280,6 +282,9 @@ onMounted(initialize)
                 <div class="chat-assistant-avatar" aria-hidden="true"><AppIcon name="bot" /></div>
                 <div class="chat-assistant-content">
                   <div v-if="message.skillName" class="conversation-skill">已使用技能 · {{ message.skillName }}</div>
+                  <div v-if="message.toolCalls?.length" class="conversation-tools" aria-label="本轮工具调用">
+                    <span v-for="tool in message.toolCalls" :key="tool.ref" :class="`tool-call tool-call--${tool.status}`"><strong>{{ tool.ref }}</strong><small>{{ tool.status }} · {{ tool.detail }}</small></span>
+                  </div>
                   <p class="chat-answer"><span v-if="streamStatusText(message)" class="stream-status">{{ streamStatusText(message) }}</span><template v-for="(segment, index) in answerSegments(message)" :key="index"><button v-if="segment.type === 'citation'" class="chat-inline-citation" type="button" @click="focusCitation(message, segment.number)">{{ segment.text }}</button><template v-else>{{ segment.text }}</template></template><span v-if="message.status === 'STREAMING'" class="stream-cursor" aria-label="正在生成"></span></p>
                   <div v-if="message.status === 'FAILED'" class="conversation-failed" role="status"><strong>回答已中断</strong><span>{{ message.error || '已保留生成的部分内容。' }}</span><button v-if="message.retryQuestion" type="button" :disabled="busy" @click="send(message.retryQuestion)">重新发送问题</button></div>
                   <ol v-if="referencedCitations(message).length" class="chat-citations">

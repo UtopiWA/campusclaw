@@ -30,6 +30,11 @@ public class ApiExceptionHandler {
         return error(HttpStatus.CONFLICT, exception.getMessage());
     }
 
+    @ExceptionHandler(BadGatewayException.class)
+    ResponseEntity<Map<String, String>> badGateway(BadGatewayException exception) {
+        return error(HttpStatus.BAD_GATEWAY, exception.getMessage());
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<Map<String, String>> forbidden() {
         return error(HttpStatus.FORBIDDEN, "Forbidden");
@@ -61,7 +66,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(DataAccessException.class)
     ResponseEntity<Map<String, String>> databaseFailure() {
-        return error(HttpStatus.INTERNAL_SERVER_ERROR, "Database operation failed");
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "Database operation failed");
     }
 
     @ExceptionHandler(DependencyUnavailableException.class)

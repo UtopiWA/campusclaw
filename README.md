@@ -9,6 +9,7 @@
 - 前端：Vue 3、Vite、Vue Router、Vitest
 - 后端：Java 17、Spring Boot 3、Spring Security、Spring Data JPA、Flyway
 - 数据：MySQL 8（正文、状态与 ngram 全文索引）、Qdrant（向量与编号 payload）
+- 工具服务：Python 3.13 标准库 HTTP Server、JSON-RPC 2.0 MCP 子集
 - 运行：Docker Compose、Nginx
 
 ## 从零启动
@@ -38,6 +39,8 @@
 MySQL 数据、上传文件和 Qdrant 向量分别保存在 `mysql-data`、`uploads-data`、`qdrant-data` 命名 volume 中。不要使用 `docker compose down -v`，除非明确要删除全部演示数据。
 
 Embedding 与 Chat 使用 OpenAI-compatible HTTP API。`.env` 中必须设置各自的 base URL、API key、模型名以及实际 embedding 维度；Qdrant collection 已存在但维度或距离不是 Cosine 时，后端会明确拒绝启动，不会自动删除或重建已有数据。
+
+Compose 还会启动仅在内部网络可见的 `mcp-demo:8090`。它与后端共用 `.env` 中的 `MCP_AUTH_TOKEN` 完成 Bearer 认证，但不会把端口发布到宿主机。后端启动时必须取得 `MCP_TOKEN_ENCRYPTION_KEY`；该值应由 `openssl rand -base64 32` 等方式生成，且不能与 JWT 密钥复用。
 
 ## 使用 DBeaver 查看数据库
 
@@ -90,6 +93,10 @@ $env:CHAT_BASE_URL = "https://你的兼容服务/v1"
 $env:CHAT_API_KEY = "本地密钥"
 $env:CHAT_MODEL = "对话模型名"
 $env:CHAT_REASONING_EFFORT = "none"
+$env:MCP_TOKEN_ENCRYPTION_KEY = "Base64 编码的 32 字节随机密钥"
+$env:MCP_ALLOWED_HOSTS = "localhost"
+$env:MCP_CONNECT_TIMEOUT = "3s"
+$env:MCP_READ_TIMEOUT = "10s"
 Set-Location backend
 .\mvnw.cmd spring-boot:run
 ```
@@ -131,11 +138,34 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 | `GET/POST /api/conversations` | 列出本人会话或选择已启用智能体创建会话 |
 | `GET/DELETE /api/conversations/{id}` | 恢复或删除本人会话；删除会级联清理其消息 |
 | `POST /api/conversations/{id}/messages` | 提交问题并返回 UTF-8 SSE 回答 |
+| `GET/POST /api/mcp/servers` | 教师列出或登记本班 MCP 服务 |
+| `PUT/DELETE /api/mcp/servers/{id}` | 教师修改服务，或删除没有审计记录的服务 |
+| `POST /api/mcp/servers/{id}/connect` | 依次执行 initialize 与 tools/list 并原子替换工具缓存 |
+| `POST /api/mcp/servers/{id}/disconnect` | 断开服务并清空已发现工具缓存 |
+| `GET /api/mcp/servers/{id}/tools` | 查看最近一次成功发现的工具及输入 Schema |
+| `GET /api/mcp/tool-calls` | 查看本班最近的脱敏工具调用审计，默认 50 条、最多 100 条 |
 | `GET /health` | 无需登录的应用与数据库健康检查 |
 
 匿名 API 请求返回 401，角色不足返回 403，跨班资源返回不泄露存在性的 404。
 
 检索的 `query` 为 1～1000 个 Unicode 字符，`limit` 为 1～20。keyword 仅依赖 MySQL；vector 和 hybrid 在嵌入或 Qdrant 不可用时返回脱敏 503。无命中始终返回 200、空 `hits` 与“资料中未找到相关内容”；问答在此分支不会调用 Chat。回答只保留实际引用的候选，并按正文首次出现顺序从 1 连续编号；前端可直接展开引用摘录，也可跳转到材料页突出目标切片及相邻上下文。Qdrant payload 不保存正文，point ID、payload `chunk_id` 与 MySQL chunk ID 保持一致。
+
+## MCP 工具配置、凭据与排障
+
+教师在 `/assistants` 的“MCP 工具”页签登记服务。Base URL 只接受 `http`/`https`，不能包含用户信息、查询参数或片段，目标主机还必须精确出现在 `MCP_ALLOWED_HOSTS` 中；后端会将地址规范化为以 `/mcp` 结尾。开发环境若单独启动 Python 服务，可先设置 `MCP_AUTH_TOKEN` 和可选的 `MCP_PORT`，运行 `python mcp-server/server.py`，再把允许主机和登记地址改为本机地址。Compose 环境应使用内部地址 `http://mcp-demo:8090`。
+
+Token 只在创建或显式替换时提交。后端以随机 12 字节 IV 和 AES-256-GCM 保存 `v1:` 版本密文，接口只返回 `hasAuth`。编辑时 Token 留空会保留原值。`MCP_TOKEN_ENCRYPTION_KEY` 不能直接轮换：当前版本没有批量重加密流程；更换密钥前必须先用旧密钥解密并重新加密所有已有凭据，否则连接会以脱敏的 503 失败。
+
+连接操作不持有数据库长事务：先读取配置快照，再在事务外执行 `initialize` 与 `tools/list`，最后校验配置版本并在短事务中整体替换缓存。客户端不跟随重定向、不自动重试；连接/读取超时分别由 `MCP_CONNECT_TIMEOUT` 和 `MCP_READ_TIMEOUT` 控制。常见问题如下：
+
+- 启动时报加密密钥错误：确认密钥是 Base64 编码后恰好 32 字节，而不是长度为 32 的普通字符串。
+- 登记返回 400：检查服务名格式、URL 中是否带查询参数，以及主机是否在 `MCP_ALLOWED_HOSTS`。
+- 连接返回 502：确认 MCP 容器健康、登记 Token 与 `MCP_AUTH_TOKEN` 一致，并检查服务是否返回约定版本的合法 JSON-RPC 结果。
+- 连接返回 409：网络探测期间配置已修改；重新发起连接即可。
+- 删除返回 409：该服务已有审计记录，设计上必须保留；可改为断开服务。
+- Swagger 位于 <http://localhost:8080/swagger-ui/index.html>，MCP 路径、错误码和 `toolCalls` 结构也可从 <http://localhost:8080/v3/api-docs> 查看。
+
+推荐启动顺序为 MySQL、Qdrant、`mcp-demo`、backend、frontend；Compose 已通过健康检查依赖表达该顺序。可分别使用 `docker compose logs mcp-demo` 和 `docker compose logs backend` 排查协议端与编排端，但日志不应输出 Token、工具原始响应或完整参数。
 
 ## 智能体配置与流式会话
 
@@ -146,18 +176,22 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 正常 SSE 协议为：
 
 ```text
-event: meta   data: {status, skillName, citations}
+event: meta   data: {status, skillName, citations, toolCalls?}
 event: delta  data: {text}                 # 零到多次，只含新增文本
 event: done   data: {messageId}             # 助手消息事务提交后发送
 ```
 
 流开始后失败时不发送 `done`：已有正文会尽力保存为 `FAILED` 并发送脱敏 `error`，没有正文则不创建空助手消息。前端保留部分回答并提供重试；完成后与刷新时均从服务端详情恢复事实状态。旧 `/api/ask` 仍保持非流式、无命中不调用 Chat 的原语义。
 
+技能的 `工具` 字段现在可以包含有序的多个引用：内置检索使用 `knowledge_search`，外部工具使用 `工具名@服务名`。中英文逗号、顿号、分号、竖线和换行都会被规范化并按首次出现顺序去重。保存技能时，所有 MCP 引用必须指向本班已连接服务的已发现工具。每轮对话仍先检索材料，再按技能顺序串行调用工具；模型不负责选工具或生成参数，调用也不会自动重试。只要材料引用或经过过滤的工具结果任一可用，就会调用 Chat；只有工具依据时 `citations=[]`，正文中的伪 `[n]` 会被移除。
+
+`meta.toolCalls` 仅含 `ref/status/detail` 安全摘要，没有 MCP 引用时整个字段省略。相同摘要会写入助手消息的 `tool_calls_json`，因此 `done` 后重新加载或刷新页面仍能恢复。原始工具输出先按 1200 个 Unicode code point 截断并检查常见指令注入模式；命中后整段替换并标为 `denied`，危险原文不会进入模型、SSE、消息或审计。
+
 API 文档位于 <http://localhost:8080/swagger-ui/index.html>，OpenAPI JSON 位于 <http://localhost:8080/v3/api-docs>。前端 Nginx 会把这些路径显式代理到 Springdoc，而不会交给 Vue 路由；两条文档路径允许匿名访问，所有 `/api/**` 业务接口仍要求 Bearer JWT。
 
 ## 接口回归测试
 
-`apitest/` 提供按 URL 和 HTTP 方法组织的 Python 接口脚本，覆盖登录、本班检索、提示词/技能、会话创建和 SSE 消息。套件会对照关键响应字段与 MySQL 状态，并在结束时恢复原智能体配置、清理带本轮唯一标识的临时技能和会话。
+`apitest/` 提供按 URL 和 HTTP 方法组织的 Python 接口脚本，覆盖登录、本班检索、MCP 登记与发现、学生 403、跨班 404、多工具技能、会话调用、注入过滤、工具快照、审计和删除冲突。套件会对照关键响应字段与 MySQL 状态，并在结束时恢复原智能体配置、清理带本轮唯一标识的临时技能、会话和允许安全删除的 MCP 数据；已有审计的测试服务按契约断开并保留。
 
 完整 Compose 环境启动且 A 班至少有一份 READY 材料后执行：
 

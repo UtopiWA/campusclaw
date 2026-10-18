@@ -21,6 +21,8 @@ import com.campusclaw.persistence.ConversationMessageRepository;
 import com.campusclaw.persistence.ConversationRepository;
 import com.campusclaw.persistence.Material;
 import com.campusclaw.persistence.MaterialRepository;
+import com.campusclaw.persistence.McpServerRepository;
+import com.campusclaw.persistence.McpToolRepository;
 import com.campusclaw.persistence.Skill;
 import com.campusclaw.persistence.SkillRepository;
 import com.campusclaw.persistence.UserAccount;
@@ -34,7 +36,8 @@ class AgentConfigurationServiceTest {
     @Test
     void invalidSkillSourceDoesNotReadOrMutatePersistence() {
         SkillRepository skills = mock(SkillRepository.class);
-        SkillService service = new SkillService(skills, new SkillTextParser());
+        SkillService service = new SkillService(skills, new SkillTextParser(),
+                mock(McpServerRepository.class), mock(McpToolRepository.class));
         UserAccount teacher = mock(UserAccount.class);
 
         assertThatThrownBy(() -> service.update(
@@ -56,11 +59,12 @@ class AgentConfigurationServiceTest {
         when(skill.getName()).thenReturn("更新后");
         when(skill.getTriggerText()).thenReturn("方程,分数");
         when(skill.getMaterialScope()).thenReturn("数学");
-        when(skill.getToolName()).thenReturn("knowledge_search");
+        when(skill.getToolRefs()).thenReturn("knowledge_search");
         when(skill.isEnabled()).thenReturn(true);
         when(skill.getInstructions()).thenReturn("只提示下一步。");
         when(skill.getSourceText()).thenReturn(validSkillSource("更新后"));
-        SkillService service = new SkillService(skills, new SkillTextParser());
+        SkillService service = new SkillService(skills, new SkillTextParser(),
+                mock(McpServerRepository.class), mock(McpToolRepository.class));
 
         SkillView view = service.update(7L, validSkillSource("更新后"), teacher);
 

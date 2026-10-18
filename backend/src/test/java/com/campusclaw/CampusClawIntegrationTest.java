@@ -106,6 +106,11 @@ class CampusClawIntegrationTest {
         registry.add("app.demo-seed.password", () -> DEMO_PASSWORD);
         registry.add("app.auth.jwt.secret", () -> "integration-test-jwt-secret-at-least-32-bytes");
         registry.add("app.auth.jwt.ttl", () -> "PT8H");
+        registry.add("app.mcp.token-encryption-key",
+                () -> "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=");
+        registry.add("app.mcp.allowed-hosts", () -> "mcp-demo");
+        registry.add("app.mcp.connect-timeout", () -> "PT1S");
+        registry.add("app.mcp.read-timeout", () -> "PT1S");
         registry.add("app.qdrant.url", () -> "http://127.0.0.1:6333");
         registry.add("app.qdrant.collection", () -> "test_chunks");
         registry.add("app.embedding.base-url", () -> "http://127.0.0.1:18081/v1");
@@ -313,11 +318,11 @@ class CampusClawIntegrationTest {
                     assertThat(binding.getLong("skill_id")).isEqualTo(30);
                 }
                 try (var skill = statement.executeQuery(
-                        "SELECT id, class_id, name, tool_name, source_text FROM skills WHERE id = 30")) {
+                        "SELECT id, class_id, name, tool_refs, source_text FROM skills WHERE id = 30")) {
                     assertThat(skill.next()).isTrue();
                     assertThat(skill.getLong("class_id")).isEqualTo(10);
                     assertThat(skill.getString("name")).isEqualTo("旧技能");
-                    assertThat(skill.getString("tool_name")).isEqualTo("knowledge_search");
+                    assertThat(skill.getString("tool_refs")).isEqualTo("knowledge_search");
                     assertThat(skill.getString("source_text")).contains("名称：旧技能");
                 }
             }
@@ -369,7 +374,7 @@ class CampusClawIntegrationTest {
                         .content(objectMapper.writeValueAsString(Map.of("sourceText", source))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.name").value("阶段测试技能"))
-                .andExpect(jsonPath("$.toolName").value("knowledge_search"))
+                .andExpect(jsonPath("$.toolRefs[0]").value("knowledge_search"))
                 .andExpect(jsonPath("$.sourceText").value(source))
                 .andReturn();
         long skillId = ((Number) com.jayway.jsonpath.JsonPath.read(
@@ -523,13 +528,6 @@ class CampusClawIntegrationTest {
                             .content(objectMapper.writeValueAsString(Map.of("assistantId", assistantA.getId()))))
                     .andExpect(status().isNotFound());
 
-            ChatGateway.ChatStream stream = mock(ChatGateway.ChatStream.class);
-            doAnswer(invocation -> {
-                java.util.function.Consumer<String> consumer = invocation.getArgument(0);
-                consumer.accept("集成回答");
-                return null;
-            }).when(stream).consume(any());
-            when(chat.openStream(any())).thenReturn(stream);
             MvcResult pending = mockMvc.perform(post("/api/conversations/{id}/messages", conversationId)
                             .with(bearer(studentA))
                             .contentType(MediaType.APPLICATION_JSON)
@@ -542,7 +540,7 @@ class CampusClawIntegrationTest {
                     .andExpect(content().string(org.hamcrest.Matchers.containsString("event: done")));
             assertThat(conversationMessages.findAllByConversationIdOrderByIdAsc(conversationId))
                     .extracting(ConversationMessage::getContent)
-                    .containsExactly("继续提问", "集成回答");
+                    .containsExactly("继续提问", RetrievalService.NO_EVIDENCE);
         } finally {
             assistantA.update(assistantA.getName(), assistantA.getPromptText(), true);
             assistants.saveAndFlush(assistantA);

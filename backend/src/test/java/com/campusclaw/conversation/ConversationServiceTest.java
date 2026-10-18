@@ -20,6 +20,7 @@ import com.campusclaw.persistence.ConversationRepository;
 import com.campusclaw.persistence.MessageRole;
 import com.campusclaw.persistence.MessageStatus;
 import com.campusclaw.persistence.UserAccount;
+import com.campusclaw.mcp.ToolCallSummary;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Optional;
@@ -81,6 +82,9 @@ class ConversationServiceTest {
                 [{"number":4,"materialId":2,"materialTitle":"讲义","chunkId":5,
                   "chunkIndex":0,"excerpt":"片段"}]
                 """);
+        when(message.getToolCallsJson()).thenReturn("""
+                [{"ref":"formula_hint@demo","status":"ok","detail":"使用距离公式"}]
+                """);
         when(conversations.findByIdAndUserIdAndClassId(8L, 4L, 7L)).thenReturn(Optional.of(conversation));
         when(assistants.findByIdAndClassId(3L, 7L)).thenReturn(Optional.of(assistant));
 
@@ -93,6 +97,8 @@ class ConversationServiceTest {
                     assertThat(citation.number()).isEqualTo(1);
                     assertThat(citation.materialTitle()).isEqualTo("讲义");
                 });
+        assertThat(result.messages().get(0).toolCalls()).containsExactly(
+                new ToolCallSummary("formula_hint@demo", "ok", "使用距离公式"));
 
         when(conversations.findByIdAndUserIdAndClassId(99L, 4L, 7L)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.get(99L, user)).isInstanceOf(NotFoundException.class);
@@ -171,6 +177,23 @@ class ConversationServiceTest {
         verify(conversations).flush();
         when(conversations.findByIdAndUserIdAndClassId(9L, 4L, 7L)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.delete(9L, user)).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void storesToolCallsInTheSameAssistantMessageSnapshot() {
+        Conversation conversation = mock(Conversation.class);
+        when(conversations.findByIdAndUserIdAndClassId(8L, 4L, 7L)).thenReturn(Optional.of(conversation));
+        when(messages.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        List<ToolCallSummary> calls = List.of(
+                new ToolCallSummary("formula_hint@demo", "ok", "使用距离公式"));
+
+        ConversationMessage saved = service.saveAssistantMessage(
+                8L, 4L, 7L, "先列出已知量", "提示", List.of(), calls, MessageStatus.COMPLETED);
+
+        assertThat(saved.getToolCallsJson())
+                .contains("formula_hint@demo", "\"status\":\"ok\"", "使用距离公式");
+        verify(conversation).touch();
+        verify(conversations).saveAndFlush(conversation);
     }
 
     private ConversationMessage message(MessageRole role, String content) {

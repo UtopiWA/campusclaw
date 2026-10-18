@@ -11,6 +11,7 @@ import com.campusclaw.persistence.ConversationRepository;
 import com.campusclaw.persistence.MessageRole;
 import com.campusclaw.persistence.MessageStatus;
 import com.campusclaw.persistence.UserAccount;
+import com.campusclaw.mcp.ToolCallSummary;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -136,6 +137,16 @@ public class ConversationService {
                                                      String content, String skillName,
                                                      List<ConversationCitation> citations,
                                                      MessageStatus status) {
+        return saveAssistantMessage(conversationId, userId, classId, content, skillName, citations,
+                List.of(), status);
+    }
+
+    @Transactional
+    public ConversationMessage saveAssistantMessage(Long conversationId, Long userId, Long classId,
+                                                     String content, String skillName,
+                                                     List<ConversationCitation> citations,
+                                                     List<ToolCallSummary> toolCalls,
+                                                     MessageStatus status) {
         if (content == null || content.isBlank()) {
             throw new BadRequestException("助手消息不能为空");
         }
@@ -143,7 +154,7 @@ public class ConversationService {
                 .orElseThrow(NotFoundException::new);
         ConversationMessage message = messages.saveAndFlush(new ConversationMessage(
                 conversationId, MessageRole.ASSISTANT, content, skillName,
-                writeCitations(citations), status));
+                writeJson(citations), writeJson(toolCalls), status));
         conversation.touch();
         conversations.saveAndFlush(conversation);
         return message;
@@ -169,23 +180,34 @@ public class ConversationService {
         }
     }
 
+    private List<ToolCallSummary> readToolCalls(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() { });
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Stored message tool calls are invalid", exception);
+        }
+    }
+
     /** 旧会话可能保存了候选原编号，读取时也统一为最终展示编号。 */
     private MessageView messageView(ConversationMessage message) {
         List<ConversationCitation> citations = readCitations(message.getCitationsJson());
+        List<ToolCallSummary> toolCalls = readToolCalls(message.getToolCallsJson());
         if (message.getRole() != MessageRole.ASSISTANT) {
-            return MessageView.from(message, citations);
+            return MessageView.from(message, citations, toolCalls);
         }
         ConversationCitationNormalizer.NormalizedAnswer normalized = citationNormalizer.normalize(
                 message.getContent(), citations);
         return new MessageView(message.getId(), message.getRole().name().toLowerCase(), normalized.content(),
-                message.getSkillName(), normalized.citations(), message.getStatus().name(), message.getCreatedAt());
+                message.getSkillName(), normalized.citations(), toolCalls,
+                message.getStatus().name(), message.getCreatedAt());
     }
 
-    private String writeCitations(List<ConversationCitation> citations) {
+    private String writeJson(List<?> values) {
         try {
-            return objectMapper.writeValueAsString(citations == null ? List.of() : citations);
+            return objectMapper.writeValueAsString(values == null ? List.of() : values);
         } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("Could not store message citations", exception);
+            throw new IllegalStateException("Could not store message metadata", exception);
         }
     }
 

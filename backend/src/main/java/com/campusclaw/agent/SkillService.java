@@ -3,6 +3,9 @@ package com.campusclaw.agent;
 import com.campusclaw.common.BadRequestException;
 import com.campusclaw.common.NotFoundException;
 import com.campusclaw.persistence.Role;
+import com.campusclaw.persistence.McpServer;
+import com.campusclaw.persistence.McpServerRepository;
+import com.campusclaw.persistence.McpToolRepository;
 import com.campusclaw.persistence.Skill;
 import com.campusclaw.persistence.SkillRepository;
 import com.campusclaw.persistence.UserAccount;
@@ -16,10 +19,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class SkillService {
     private final SkillRepository skills;
     private final SkillTextParser parser;
+    private final McpServerRepository mcpServers;
+    private final McpToolRepository mcpTools;
 
-    public SkillService(SkillRepository skills, SkillTextParser parser) {
+    public SkillService(SkillRepository skills, SkillTextParser parser,
+                        McpServerRepository mcpServers, McpToolRepository mcpTools) {
         this.skills = skills;
         this.parser = parser;
+        this.mcpServers = mcpServers;
+        this.mcpTools = mcpTools;
     }
 
     @Transactional(readOnly = true)
@@ -38,12 +46,13 @@ public class SkillService {
     @Transactional
     public SkillView create(String sourceText, UserAccount teacher) {
         SkillDefinition definition = parser.parse(sourceText);
+        validateToolRefs(definition.toolRefs(), teacher.getClassId());
         if (skills.findFirstByClassIdAndName(teacher.getClassId(), definition.name()).isPresent()) {
             throw new BadRequestException("本班已存在同名技能");
         }
         Skill skill = new Skill(
                 teacher.getClassId(), definition.name(), definition.triggerText(), definition.materialScope(),
-                definition.toolName(), definition.enabled(), definition.instructions(), definition.sourceText());
+                definition.toolRefsText(), definition.enabled(), definition.instructions(), definition.sourceText());
         try {
             return SkillView.from(skills.saveAndFlush(skill), true);
         } catch (DataIntegrityViolationException exception) {
@@ -55,10 +64,11 @@ public class SkillService {
     public SkillView update(Long id, String sourceText, UserAccount teacher) {
         SkillDefinition definition = parser.parse(sourceText);
         Skill skill = requireSkill(id, teacher.getClassId());
+        validateToolRefs(definition.toolRefs(), teacher.getClassId());
         if (skills.existsByClassIdAndNameAndIdNot(teacher.getClassId(), definition.name(), id)) {
             throw new BadRequestException("本班已存在同名技能");
         }
-        skill.update(definition.name(), definition.triggerText(), definition.materialScope(), definition.toolName(),
+        skill.update(definition.name(), definition.triggerText(), definition.materialScope(), definition.toolRefsText(),
                 definition.enabled(), definition.instructions(), definition.sourceText());
         try {
             return SkillView.from(skills.saveAndFlush(skill), true);
@@ -75,5 +85,20 @@ public class SkillService {
 
     private Skill requireSkill(Long id, Long classId) {
         return skills.findByIdAndClassId(id, classId).orElseThrow(NotFoundException::new);
+    }
+
+    private void validateToolRefs(List<String> refs, Long classId) {
+        for (String ref : refs) {
+            if ("knowledge_search".equals(ref)) continue;
+            int separator = ref.indexOf('@');
+            String toolName = ref.substring(0, separator);
+            String serverName = ref.substring(separator + 1);
+            McpServer server = mcpServers.findFirstByClassIdAndName(classId, serverName)
+                    .filter(McpServer::isConnected)
+                    .orElseThrow(() -> new BadRequestException("工具不可用"));
+            if (mcpTools.findFirstByServerIdAndName(server.getId(), toolName).isEmpty()) {
+                throw new BadRequestException("工具不可用");
+            }
+        }
     }
 }

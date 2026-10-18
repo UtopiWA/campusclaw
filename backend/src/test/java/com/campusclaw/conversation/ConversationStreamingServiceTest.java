@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.campusclaw.common.DependencyUnavailableException;
 import com.campusclaw.gateway.ChatGateway;
+import com.campusclaw.mcp.ToolCallSummary;
 import com.campusclaw.persistence.ConversationMessage;
 import com.campusclaw.persistence.MessageStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -168,8 +169,36 @@ class ConversationStreamingServiceTest {
                 9L, 6L, 2L, "结论[1]", null, List.of(finalFirst), MessageStatus.COMPLETED);
     }
 
+    @Test
+    void emitsAndPersistsSafeToolCallSnapshotsBeforeTheFirstDelta() {
+        ConversationService conversations = mock(ConversationService.class);
+        ConversationMessage saved = mock(ConversationMessage.class);
+        when(saved.getId()).thenReturn(90L);
+        List<ToolCallSummary> calls = List.of(
+                new ToolCallSummary("formula_hint@demo", "ok", "使用距离公式"));
+        when(conversations.saveAssistantMessage(
+                9L, 6L, 2L, "先列出已知量", "提示", List.of(), calls, MessageStatus.COMPLETED))
+                .thenReturn(saved);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+        new ConversationStreamingService(conversations, new ObjectMapper(),
+                new ConversationCitationNormalizer()).stream(
+                preparation("提示", List.of(), calls, consumer -> consumer.accept("先列出已知量")), output);
+
+        String frames = output.toString(StandardCharsets.UTF_8);
+        assertThat(frames).contains("\"toolCalls\"", "formula_hint@demo", "\"status\":\"ok\"");
+        assertThat(frames.indexOf("\"toolCalls\"")).isLessThan(frames.indexOf("event: delta"));
+        verify(conversations).saveAssistantMessage(
+                9L, 6L, 2L, "先列出已知量", "提示", List.of(), calls, MessageStatus.COMPLETED);
+    }
+
     private AgentTurnPreparation preparation(String skillName, List<ConversationCitation> citations,
                                              StreamAction action) {
+        return preparation(skillName, citations, List.of(), action);
+    }
+
+    private AgentTurnPreparation preparation(String skillName, List<ConversationCitation> citations,
+                                             List<ToolCallSummary> toolCalls, StreamAction action) {
         ChatGateway.ChatStream stream = new ChatGateway.ChatStream() {
             @Override
             public void consume(Consumer<String> consumer) { action.run(consumer); }
@@ -177,7 +206,7 @@ class ConversationStreamingServiceTest {
             @Override
             public void close() { }
         };
-        AgentTurnPlan plan = new AgentTurnPlan(skillName, citations,
+        AgentTurnPlan plan = new AgentTurnPlan(skillName, citations, toolCalls,
                 List.of(new ChatGateway.ChatMessage("system", "规则")));
         return new AgentTurnPreparation(9L, 6L, 2L, plan, stream);
     }

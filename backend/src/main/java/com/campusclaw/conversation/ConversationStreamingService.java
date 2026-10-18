@@ -32,7 +32,7 @@ public class ConversationStreamingService {
         AgentTurnPlan plan = preparation.plan();
         CitationMarkerFilter markerFilter = plan.citations().isEmpty() ? new CitationMarkerFilter() : null;
         try (var upstream = preparation.stream()) {
-            writer.write("meta", new SseMetaEvent("ready", plan.skillName(), plan.citations()));
+            writer.write("meta", new SseMetaEvent("ready", plan.skillName(), plan.citations(), plan.toolCalls()));
             upstream.consume(delta -> appendDelta(delta, markerFilter, visibleText, writer));
             if (markerFilter != null) {
                 appendVisible(markerFilter.finish(), visibleText, writer);
@@ -42,9 +42,7 @@ public class ConversationStreamingService {
             }
             ConversationCitationNormalizer.NormalizedAnswer normalized = citationNormalizer.normalize(
                     visibleText.toString(), plan.citations());
-            ConversationMessage saved = conversations.saveAssistantMessage(
-                    preparation.conversationId(), preparation.userId(), preparation.classId(),
-                    normalized.content(), plan.skillName(), normalized.citations(), MessageStatus.COMPLETED);
+            ConversationMessage saved = saveAssistant(preparation, normalized, MessageStatus.COMPLETED);
             completedMessage[0] = true;
             writer.write("done", Map.of("messageId", saved.getId()));
         } catch (RuntimeException exception) {
@@ -84,12 +82,25 @@ public class ConversationStreamingService {
         try {
             ConversationCitationNormalizer.NormalizedAnswer normalized = citationNormalizer.normalize(
                     partialText, preparation.plan().citations());
-            conversations.saveAssistantMessage(
-                    preparation.conversationId(), preparation.userId(), preparation.classId(),
-                    normalized.content(), preparation.plan().skillName(), normalized.citations(), MessageStatus.FAILED);
+            saveAssistant(preparation, normalized, MessageStatus.FAILED);
         } catch (RuntimeException persistenceFailure) {
             log.warn("Could not persist interrupted assistant message for conversation {}",
                     preparation.conversationId());
         }
+    }
+
+    private ConversationMessage saveAssistant(
+            AgentTurnPreparation preparation,
+            ConversationCitationNormalizer.NormalizedAnswer normalized,
+            MessageStatus status) {
+        AgentTurnPlan plan = preparation.plan();
+        if (plan.toolCalls().isEmpty()) {
+            return conversations.saveAssistantMessage(
+                    preparation.conversationId(), preparation.userId(), preparation.classId(),
+                    normalized.content(), plan.skillName(), normalized.citations(), status);
+        }
+        return conversations.saveAssistantMessage(
+                preparation.conversationId(), preparation.userId(), preparation.classId(),
+                normalized.content(), plan.skillName(), normalized.citations(), plan.toolCalls(), status);
     }
 }

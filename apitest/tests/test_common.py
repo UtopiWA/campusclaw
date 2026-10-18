@@ -93,6 +93,8 @@ class CommonInfrastructureTest(unittest.TestCase):
             db_name="test",
             db_user="test",
             db_password="db-secret",
+            mcp_auth_token="mcp-secret",
+            mcp_base_url="http://mcp-demo:8090",
             http_timeout=1,
             stream_timeout=1,
         )

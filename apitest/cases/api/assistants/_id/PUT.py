@@ -57,8 +57,8 @@ def run(context) -> None:
         "name": assistant["name"],
         "promptText": prompt_text,
         "enabled": True,
-        # 本轮仅绑定唯一测试技能和材料，避免既有配置影响路由同分或引用来源。
-        "skillIds": [skill_id],
+        # 两个技能使用互斥触发词；正常问题不会误选注入边界探针。
+        "skillIds": [skill_id, context.state["injection_skill"]["id"]],
         "materialIds": [material_id],
     }
     forbidden = context.http.request(
@@ -97,4 +97,8 @@ def run(context) -> None:
     )}
     require_equal(stored_skill_ids, set(updated["skillIds"]), "MySQL 技能绑定应与响应一致")
     require_equal(stored_material_ids, set(updated["materialIds"]), "MySQL 材料绑定应与响应一致")
-    context.state["assistant"] = {"id": assistant_id, "name": assistant["name"]}
+    context.state["assistant"] = {
+        "id": assistant_id,
+        "name": assistant["name"],
+        "testConfig": updated,
+    }

@@ -18,6 +18,9 @@ public class SkillTextParser {
     private static final int MAX_SOURCE_LENGTH = 8000;
     private static final Pattern SECTION_BREAK = Pattern.compile("\\n[\\t ]*\\n");
     private static final Pattern TRIGGER_SEPARATOR = Pattern.compile("[,，、;；|]");
+    private static final Pattern TOOL_SEPARATOR = Pattern.compile("[,，、;；|\\n]");
+    private static final Pattern MCP_TOOL_REF = Pattern.compile(
+            "[a-z][a-z0-9_]{0,31}@[a-z][a-z0-9_-]{0,31}");
     private static final Set<String> ALLOWED_FIELDS = Set.of("名称", "适用条件", "资料", "工具", "启用");
 
     public SkillDefinition parse(String sourceText) {
@@ -40,20 +43,18 @@ public class SkillTextParser {
         String name = required(values, "名称");
         String triggerText = required(values, "适用条件");
         String materialScope = values.getOrDefault("资料", "").trim();
-        String toolName = values.getOrDefault("工具", "knowledge_search").trim();
+        String toolText = values.getOrDefault("工具", "knowledge_search").trim();
         boolean enabled = parseEnabled(required(values, "启用"));
 
         requireMaxLength(name, 32, "技能名称不能超过 32 字");
         requireMaxLength(triggerText, 120, "适用条件不能超过 120 字");
         requireMaxLength(materialScope, 32, "资料范围不能超过 32 字");
-        if (!"knowledge_search".equals(toolName)) {
-            throw new BadRequestException("工具只允许 knowledge_search");
-        }
+        List<String> toolRefs = splitTools(toolText);
         List<String> triggers = splitTriggers(triggerText);
         if (triggers.isEmpty()) {
             throw new BadRequestException("适用条件至少包含一个关键词");
         }
-        return new SkillDefinition(name, triggers, materialScope, toolName, enabled, instructions, sourceText);
+        return new SkillDefinition(name, triggers, materialScope, toolRefs, enabled, instructions, sourceText);
     }
 
     private Map<String, String> parseMetadata(String metadata) {
@@ -96,6 +97,22 @@ public class SkillTextParser {
             }
         }
         return new ArrayList<>(values);
+    }
+
+    private List<String> splitTools(String toolText) {
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        for (String value : TOOL_SEPARATOR.split(toolText)) {
+            String clean = value.trim();
+            if (clean.isEmpty()) continue;
+            if (!"knowledge_search".equals(clean) && !MCP_TOOL_REF.matcher(clean).matches()) {
+                throw new BadRequestException("工具引用格式不合法，仅允许 knowledge_search 或 工具名@服务名：" + clean);
+            }
+            values.add(clean);
+        }
+        if (values.isEmpty()) throw new BadRequestException("工具字段至少包含一个工具引用");
+        String normalized = String.join(",", values);
+        requireMaxLength(normalized, MAX_SOURCE_LENGTH, "工具引用总长度不能超过 8000 字");
+        return List.copyOf(values);
     }
 
     private boolean parseEnabled(String value) {

@@ -7,12 +7,16 @@ public record SkillDefinition(
         String name,
         List<String> triggers,
         String materialScope,
-        String toolName,
+        List<String> toolRefs,
         boolean enabled,
         String instructions,
         String sourceText) {
 
     public String triggerText() {
         return String.join(",", triggers);
+    }
+
+    public String toolRefsText() {
+        return String.join(",", toolRefs);
     }
 }

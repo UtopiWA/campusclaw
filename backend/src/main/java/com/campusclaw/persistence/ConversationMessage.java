@@ -35,6 +35,9 @@ public class ConversationMessage {
     @Column(name = "citations_json", nullable = false, columnDefinition = "JSON")
     private String citationsJson;
 
+    @Column(name = "tool_calls_json", columnDefinition = "JSON")
+    private String toolCallsJson;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private MessageStatus status;
@@ -47,11 +50,18 @@ public class ConversationMessage {
 
     public ConversationMessage(Long conversationId, MessageRole role, String content,
                                String skillName, String citationsJson, MessageStatus status) {
+        this(conversationId, role, content, skillName, citationsJson, null, status);
+    }
+
+    public ConversationMessage(Long conversationId, MessageRole role, String content,
+                               String skillName, String citationsJson, String toolCallsJson,
+                               MessageStatus status) {
         this.conversationId = conversationId;
         this.role = role;
         this.content = content;
         this.skillName = skillName;
         this.citationsJson = citationsJson;
+        this.toolCallsJson = toolCallsJson;
         this.status = status;
     }
 
@@ -64,6 +74,7 @@ public class ConversationMessage {
     public String getContent() { return content; }
     public String getSkillName() { return skillName; }
     public String getCitationsJson() { return citationsJson; }
+    public String getToolCallsJson() { return toolCallsJson; }
     public MessageStatus getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
 }

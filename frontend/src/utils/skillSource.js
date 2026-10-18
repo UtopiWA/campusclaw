@@ -8,13 +8,15 @@ export function buildSkillSource(skill) {
   if (!name) throw new Error('请输入技能名称。')
   if (!triggerText) throw new Error('请输入至少一个触发条件。')
   if (!instructions) throw new Error('请输入行为说明。')
-  if (!skill.knowledgeSearch) throw new Error('当前技能必须绑定知识检索工具。')
+  const toolRefs = [...new Set((skill.toolRefs || (skill.knowledgeSearch ? ['knowledge_search'] : []))
+    .map((value) => String(value).trim()).filter(Boolean))]
+  if (!toolRefs.length) throw new Error('请至少绑定一个工具。')
 
   return [
     `名称：${name}`,
     `适用条件：${triggerText}`,
     `资料：${skill.materialScope?.trim() || ''}`,
-    '工具：knowledge_search',
+    `工具：${toolRefs.join(', ')}`,
     `启用：${skill.enabled ? '是' : '否'}`,
     '',
     instructions,
@@ -48,8 +50,12 @@ export function parseSkillSource(sourceText) {
   const enabledValue = values.get('启用')?.trim().toLocaleLowerCase()
   if (!name || !triggerText || !instructions || !enabledValue) throw new Error('导入文本缺少名称、适用条件、启用或行为说明。')
   if (!['是', '否', 'true', 'false'].includes(enabledValue)) throw new Error('启用字段只能是“是/否”或 true/false。')
-  const toolName = values.get('工具')?.trim() || 'knowledge_search'
-  if (toolName !== 'knowledge_search') throw new Error('工具只允许 knowledge_search。')
+  const toolRefs = [...new Set((values.get('工具')?.trim() || 'knowledge_search')
+    .split(/[,，、;；|\n]/).map((value) => value.trim()).filter(Boolean))]
+  const pattern = /^[a-z][a-z0-9_]{0,31}@[a-z][a-z0-9_-]{0,31}$/
+  if (toolRefs.some((ref) => ref !== 'knowledge_search' && !pattern.test(ref))) {
+    throw new Error('工具引用必须是 knowledge_search 或“工具名@服务名”。')
+  }
 
   return {
     name,
@@ -57,6 +63,7 @@ export function parseSkillSource(sourceText) {
     materialScope: values.get('资料')?.trim() || '',
     instructions,
     enabled: ['是', 'true'].includes(enabledValue),
-    knowledgeSearch: true,
+    toolRefs,
+    knowledgeSearch: toolRefs.includes('knowledge_search'),
   }
 }

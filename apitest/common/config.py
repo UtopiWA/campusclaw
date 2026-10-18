@@ -51,6 +51,8 @@ class TestConfig:
     db_name: str
     db_user: str
     db_password: str
+    mcp_auth_token: str
+    mcp_base_url: str
     http_timeout: float
     stream_timeout: float
 
@@ -72,6 +74,7 @@ class TestConfig:
             "MYSQL_DATABASE": value("MYSQL_DATABASE", "campusclaw"),
             "MYSQL_USER": value("MYSQL_USER", "campusclaw"),
             "MYSQL_PASSWORD": value("MYSQL_PASSWORD"),
+            "MCP_AUTH_TOKEN": value("MCP_AUTH_TOKEN"),
         }
         missing = [name for name, item in required.items() if not item]
         if missing:
@@ -89,6 +92,8 @@ class TestConfig:
             db_name=required["MYSQL_DATABASE"],
             db_user=required["MYSQL_USER"],
             db_password=required["MYSQL_PASSWORD"],
+            mcp_auth_token=required["MCP_AUTH_TOKEN"],
+            mcp_base_url=value("APITEST_MCP_BASE_URL", "http://mcp-demo:8090"),
             http_timeout=_positive_number(values, "APITEST_HTTP_TIMEOUT", "20", float),
             stream_timeout=_positive_number(values, "APITEST_STREAM_TIMEOUT", "180", float),
         )
@@ -99,4 +104,5 @@ class TestConfig:
             self.teacher_password,
             self.student_password,
             self.db_password,
+            self.mcp_auth_token,
         } - {""})

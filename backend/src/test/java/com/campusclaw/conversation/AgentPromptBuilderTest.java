@@ -6,6 +6,8 @@ import static org.mockito.Mockito.when;
 
 import com.campusclaw.persistence.Assistant;
 import com.campusclaw.persistence.Skill;
+import com.campusclaw.mcp.McpTurnResult;
+import com.campusclaw.mcp.ToolCallSummary;
 import com.campusclaw.retrieval.RetrievalHit;
 import java.util.List;
 import java.util.Optional;
@@ -64,6 +66,25 @@ class AgentPromptBuilderTest {
         assertThat(plan.citations()).extracting(ConversationCitation::number).containsExactly(1, 2, 3, 4);
         String excerpt = plan.citations().get(0).excerpt();
         assertThat(excerpt.codePointCount(0, excerpt.length())).isEqualTo(800);
+    }
+
+    @Test
+    void keepsToolDataOutOfSystemMessageAndPreservesItsSafeSummary() {
+        McpTurnResult tools = new McpTurnResult(
+                List.of(new ToolCallSummary("formula_hint@demo", "ok", "使用距离公式")),
+                List.of(new McpTurnResult.ToolContext("formula_hint@demo", "使用距离公式")));
+
+        AgentTurnPlan plan = builder.build(
+                assistant("数学老师"), Optional.empty(), List.of(), tools, List.of(), "怎样开始？");
+
+        assertThat(plan.citations()).isEmpty();
+        assertThat(plan.toolCalls()).containsExactly(
+                new ToolCallSummary("formula_hint@demo", "ok", "使用距离公式"));
+        assertThat(plan.messages().get(0).content())
+                .contains("只有工具数据可用", "不可信数据")
+                .doesNotContain("使用距离公式");
+        assertThat(plan.messages().get(1).content())
+                .contains("[工具 formula_hint@demo 返回的数据]", "使用距离公式");
     }
 
     private Assistant assistant(String prompt) {

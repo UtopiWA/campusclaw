@@ -29,8 +29,8 @@ public class Skill {
     @Column(name = "material_scope", nullable = false, length = 32)
     private String materialScope;
 
-    @Column(name = "tool_name", nullable = false, length = 64)
-    private String toolName;
+    @Column(name = "tool_refs", nullable = false, columnDefinition = "TEXT")
+    private String toolRefs;
 
     @Column(nullable = false)
     private boolean enabled;
@@ -51,12 +51,12 @@ public class Skill {
     }
 
     public Skill(Long classId, String name, String triggerText, String materialScope,
-                 String toolName, boolean enabled, String instructions, String sourceText) {
+                 String toolRefs, boolean enabled, String instructions, String sourceText) {
         this.classId = classId;
         this.name = name;
         this.triggerText = triggerText;
         this.materialScope = materialScope;
-        this.toolName = toolName;
+        this.toolRefs = toolRefs;
         this.enabled = enabled;
         this.instructions = instructions;
         this.sourceText = sourceText;
@@ -70,11 +70,11 @@ public class Skill {
 
     /** 原文重新解析成功后才整体覆盖结构化字段，避免半成品配置。 */
     public void update(String name, String triggerText, String materialScope,
-                       String toolName, boolean enabled, String instructions, String sourceText) {
+                       String toolRefs, boolean enabled, String instructions, String sourceText) {
         this.name = name;
         this.triggerText = triggerText;
         this.materialScope = materialScope;
-        this.toolName = toolName;
+        this.toolRefs = toolRefs;
         this.enabled = enabled;
         this.instructions = instructions;
         this.sourceText = sourceText;
@@ -85,7 +85,7 @@ public class Skill {
     public String getName() { return name; }
     public String getTriggerText() { return triggerText; }
     public String getMaterialScope() { return materialScope; }
-    public String getToolName() { return toolName; }
+    public String getToolRefs() { return toolRefs; }
     public boolean isEnabled() { return enabled; }
     public String getInstructions() { return instructions; }
     public String getSourceText() { return sourceText; }

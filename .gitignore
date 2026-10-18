@@ -12,3 +12,4 @@ uploads/
 .docker-config/
 apitest/reports/
 apitest/**/__pycache__/
+mcp-server/**/__pycache__/

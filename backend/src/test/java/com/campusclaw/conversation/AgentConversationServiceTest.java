@@ -13,6 +13,9 @@ import com.campusclaw.agent.SkillRouter;
 import com.campusclaw.common.NotFoundException;
 import com.campusclaw.common.DependencyUnavailableException;
 import com.campusclaw.gateway.ChatGateway;
+import com.campusclaw.mcp.McpToolOrchestrator;
+import com.campusclaw.mcp.McpTurnResult;
+import com.campusclaw.mcp.ToolCallSummary;
 import com.campusclaw.persistence.Assistant;
 import com.campusclaw.persistence.AssistantMaterial;
 import com.campusclaw.persistence.AssistantMaterialRepository;
@@ -38,6 +41,7 @@ class AgentConversationServiceTest {
     private RetrievalService retrieval;
     private AgentPromptBuilder prompts;
     private ChatGateway chat;
+    private McpToolOrchestrator mcpTools;
     private AgentConversationService service;
     private UserAccount user;
 
@@ -50,11 +54,13 @@ class AgentConversationServiceTest {
         retrieval = mock(RetrievalService.class);
         prompts = mock(AgentPromptBuilder.class);
         chat = mock(ChatGateway.class);
+        mcpTools = mock(McpToolOrchestrator.class);
         service = new AgentConversationService(
-                conversations, assistants, materials, router, retrieval, prompts, chat);
+                conversations, assistants, materials, router, retrieval, prompts, chat, mcpTools);
         user = mock(UserAccount.class);
         when(user.getId()).thenReturn(6L);
         when(user.getClassId()).thenReturn(2L);
+        when(mcpTools.invoke(any(), any(), any(), any())).thenReturn(McpTurnResult.empty());
     }
 
     @Test
@@ -77,7 +83,8 @@ class AgentConversationServiceTest {
         SearchResponse response = new SearchResponse(SearchMode.HYBRID, null, List.of());
         when(retrieval.searchBound("方程问题", 2L, java.util.Set.of(11L), 4)).thenReturn(response);
         when(conversations.historyBefore(9L, 20L)).thenReturn(List.of());
-        when(prompts.build(assistant, Optional.of(skill), List.of(), List.of(), "方程问题")).thenReturn(plan);
+        when(prompts.build(assistant, Optional.of(skill), List.of(), McpTurnResult.empty(), List.of(), "方程问题"))
+                .thenReturn(plan);
         when(chat.openStream(plan.messages())).thenReturn(stream);
 
         AgentTurnPreparation result = service.prepare(9L, "方程问题", user);
@@ -90,7 +97,7 @@ class AgentConversationServiceTest {
         order.verify(conversations).saveUserMessage(9L, "方程问题", user);
         order.verify(retrieval).searchBound("方程问题", 2L, java.util.Set.of(11L), 4);
         order.verify(conversations).historyBefore(9L, 20L);
-        order.verify(prompts).build(assistant, Optional.of(skill), List.of(), List.of(), "方程问题");
+        order.verify(prompts).build(assistant, Optional.of(skill), List.of(), McpTurnResult.empty(), List.of(), "方程问题");
         order.verify(chat).openStream(plan.messages());
     }
 
@@ -127,7 +134,8 @@ class AgentConversationServiceTest {
         when(retrieval.searchBound("第一问", 2L, java.util.Set.of(11L), 4)).thenReturn(response);
         when(conversations.historyBefore(9L, 20L)).thenReturn(List.of());
         AgentTurnPlan plan = new AgentTurnPlan(null, List.of(citation()), List.of());
-        when(prompts.build(assistant, Optional.empty(), List.of(), List.of(), "第一问")).thenReturn(plan);
+        when(prompts.build(assistant, Optional.empty(), List.of(), McpTurnResult.empty(), List.of(), "第一问"))
+                .thenReturn(plan);
         when(chat.openStream(plan.messages())).thenReturn(mock(ChatGateway.ChatStream.class));
 
         service.prepare(9L, "第一问", user);
@@ -160,7 +168,8 @@ class AgentConversationServiceTest {
                 .thenReturn(new SearchResponse(SearchMode.HYBRID, RetrievalService.NO_EVIDENCE, List.of()));
         when(conversations.historyBefore(9L, 20L)).thenReturn(List.of());
         AgentTurnPlan plan = new AgentTurnPlan(null, List.of(), List.of());
-        when(prompts.build(assistant, Optional.empty(), List.of(), List.of(), "冷门问题")).thenReturn(plan);
+        when(prompts.build(assistant, Optional.empty(), List.of(), McpTurnResult.empty(), List.of(), "冷门问题"))
+                .thenReturn(plan);
 
         AgentTurnPreparation result = service.prepare(9L, "冷门问题", user);
         StringBuilder output = new StringBuilder();
@@ -168,6 +177,40 @@ class AgentConversationServiceTest {
 
         assertThat(output).hasToString(RetrievalService.NO_EVIDENCE);
         verifyNoInteractions(chat);
+    }
+
+    @Test
+    void opensChatForUsableToolEvidenceEvenWhenMaterialEvidenceIsEmpty() {
+        Conversation conversation = mock(Conversation.class);
+        Assistant assistant = mock(Assistant.class);
+        Skill skill = mock(Skill.class);
+        ConversationMessage userMessage = mock(ConversationMessage.class);
+        ChatGateway.ChatStream stream = mock(ChatGateway.ChatStream.class);
+        McpTurnResult toolResult = new McpTurnResult(
+                List.of(new ToolCallSummary("formula_hint@demo", "ok", "使用距离公式")),
+                List.of(new McpTurnResult.ToolContext("formula_hint@demo", "使用距离公式")));
+        AgentTurnPlan plan = new AgentTurnPlan("提示", List.of(), toolResult.calls(),
+                List.of(new ChatGateway.ChatMessage("system", "规则")));
+        when(conversation.getAssistantId()).thenReturn(3L);
+        when(assistant.getId()).thenReturn(3L);
+        when(conversations.requireOwned(9L, user)).thenReturn(conversation);
+        when(assistants.findByIdAndClassId(3L, 2L)).thenReturn(Optional.of(assistant));
+        when(router.route(3L, 2L, "提示我下一步")).thenReturn(Optional.of(skill));
+        when(materials.findAllByAssistantId(3L)).thenReturn(List.of());
+        when(conversations.saveUserMessage(9L, "提示我下一步", user)).thenReturn(userMessage);
+        when(userMessage.getId()).thenReturn(20L);
+        when(retrieval.searchBound("提示我下一步", 2L, java.util.Set.of(), 4))
+                .thenReturn(new SearchResponse(SearchMode.HYBRID, RetrievalService.NO_EVIDENCE, List.of()));
+        when(mcpTools.invoke(Optional.of(skill), "提示我下一步", 9L, user)).thenReturn(toolResult);
+        when(conversations.historyBefore(9L, 20L)).thenReturn(List.of());
+        when(prompts.build(assistant, Optional.of(skill), List.of(), toolResult, List.of(), "提示我下一步"))
+                .thenReturn(plan);
+        when(chat.openStream(plan.messages())).thenReturn(stream);
+
+        AgentTurnPreparation result = service.prepare(9L, "提示我下一步", user);
+
+        assertThat(result.stream()).isSameAs(stream);
+        verify(chat).openStream(plan.messages());
     }
 
     private ConversationCitation citation() {

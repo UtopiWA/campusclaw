@@ -65,6 +65,23 @@ describe('ConversationsView', () => {
     wrapper.unmount()
   })
 
+  it('restores persisted tool summaries before the assistant answer', async () => {
+    state.getConversation.mockResolvedValue({
+      ...detail(), messages: [{
+        id: 18, role: 'assistant', content: 'The converted value is 2000 m.', status: 'COMPLETED', citations: [],
+        toolCalls: [{ ref: 'unit_convert@demo', status: 'ok', detail: '2 km = 2000 m' }],
+      }],
+    })
+    const wrapper = mount(ConversationsView, { global })
+    await flushPromises()
+
+    const toolBlock = wrapper.find('.conversation-tools')
+    const answer = wrapper.find('.chat-answer')
+    expect(toolBlock.text()).toContain('unit_convert@demo')
+    expect(toolBlock.text()).toContain('ok · 2 km = 2000 m')
+    expect(toolBlock.element.compareDocumentPosition(answer.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('only lists retrieval candidates that are actually cited by the answer', async () => {
     state.getConversation.mockResolvedValue({
       ...detail(), messages: [{
