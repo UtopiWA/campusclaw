@@ -248,7 +248,7 @@ class GatewayClientTest {
                 new AppProperties.Embedding(embeddingBaseUrl, "embedding-secret", "embed", 3),
                 new AppProperties.Chat(chatBaseUrl, "chat-secret", "chat", "none"),
                 new AppProperties.Retrieval(Duration.ofSeconds(1), readTimeout,
-                        1000, 10, 20, 0.35, 60, false));
+                        1000, 10, 20, 0.35, 0.55, 0.45, 60, false));
     }
 
     private OpenAiEmbeddingGateway embeddingGateway(String path, Duration readTimeout) {

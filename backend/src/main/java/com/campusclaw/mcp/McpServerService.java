@@ -11,6 +11,7 @@ import com.campusclaw.persistence.McpTool;
 import com.campusclaw.persistence.McpToolCallRepository;
 import com.campusclaw.persistence.McpToolRepository;
 import com.campusclaw.persistence.UserAccount;
+import com.campusclaw.persistence.UserAccountRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,7 +20,10 @@ import java.net.URISyntaxException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -32,6 +36,7 @@ public class McpServerService {
     private final McpServerRepository servers;
     private final McpToolRepository tools;
     private final McpToolCallRepository calls;
+    private final UserAccountRepository users;
     private final McpTokenCipher tokens;
     private final McpHttpClient client;
     private final ObjectMapper objectMapper;
@@ -39,12 +44,13 @@ public class McpServerService {
     private final Set<String> allowedHosts;
 
     public McpServerService(McpServerRepository servers, McpToolRepository tools,
-                            McpToolCallRepository calls, McpTokenCipher tokens,
+                            McpToolCallRepository calls, UserAccountRepository users, McpTokenCipher tokens,
                             McpHttpClient client, ObjectMapper objectMapper,
                             TransactionTemplate transactions, McpProperties properties) {
         this.servers = servers;
         this.tools = tools;
         this.calls = calls;
+        this.users = users;
         this.tokens = tokens;
         this.client = client;
         this.objectMapper = objectMapper;
@@ -112,6 +118,8 @@ public class McpServerService {
                 throw new ConflictException("MCP 服务配置已变化，请重新连接");
             }
             tools.deleteAllByServerId(server.getId());
+            // 先让旧目录的删除真正落库，再插入可能同名的新工具，避免唯一键冲突。
+            tools.flush();
             discovered.forEach(tool -> tools.save(new McpTool(server.getId(), tool.name(), tool.description(),
                     writeJson(tool.inputSchema()))));
             tools.flush();
@@ -141,8 +149,14 @@ public class McpServerService {
     @Transactional(readOnly = true)
     public List<McpToolCallView> listCalls(int limit, UserAccount teacher) {
         if (limit < 1 || limit > 100) throw new BadRequestException("limit 必须在 1 到 100 之间");
-        return calls.findAllByClassIdOrderByCreatedAtDesc(teacher.getClassId(), PageRequest.of(0, limit)).stream()
-                .map(McpToolCallView::from).toList();
+        var recentCalls = calls.findAllByClassIdOrderByCreatedAtDesc(
+                teacher.getClassId(), PageRequest.of(0, limit));
+        Map<Long, UserAccount> usersById = users.findAllById(recentCalls.stream()
+                        .map(call -> call.getUserId()).distinct().toList()).stream()
+                .collect(Collectors.toMap(UserAccount::getId, Function.identity()));
+        return recentCalls.stream().map(call -> McpToolCallView.from(call,
+                usersById.containsKey(call.getUserId()) ? usersById.get(call.getUserId()).getUsername() : "未知用户"))
+                .toList();
     }
 
     @Transactional

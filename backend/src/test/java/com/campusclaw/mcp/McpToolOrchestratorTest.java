@@ -39,34 +39,35 @@ class McpToolOrchestratorTest {
         when(servers.findFirstByClassIdAndName(7L, "demo")).thenReturn(Optional.of(server));
         when(tools.findFirstByServerIdAndName(null, "formula_hint"))
                 .thenReturn(Optional.of(new McpTool(null, "formula_hint", "", "{}")));
-        when(tools.findFirstByServerIdAndName(null, "unit_convert"))
-                .thenReturn(Optional.of(new McpTool(null, "unit_convert", "", "{}")));
+        when(tools.findFirstByServerIdAndName(null, "calculator"))
+                .thenReturn(Optional.of(new McpTool(null, "calculator", "", "{}")));
         when(tokens.decrypt("ciphertext")).thenReturn("token");
         when(client.call(eq("http://mcp-demo:8090/mcp"), eq("token"), eq("formula_hint"), any()))
                 .thenReturn("Use the distance formula.");
-        when(client.call(eq("http://mcp-demo:8090/mcp"), eq("token"), eq("unit_convert"), any()))
-                .thenReturn("2 km = 2000 m");
+        when(client.call(eq("http://mcp-demo:8090/mcp"), eq("token"), eq("calculator"), any()))
+                .thenReturn("(12.5 + 7.5) * 3 = 60");
         when(calls.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
         Skill skill = new Skill(7L, "math", "convert", "",
-                "knowledge_search,formula_hint@demo,unit_convert@demo", true, "guide", "source");
+                "knowledge_search,formula_hint@demo,calculator@demo", true, "guide", "source");
 
-        McpTurnResult result = orchestrator.invoke(Optional.of(skill), "Convert 2 km to m", 19L, user());
+        McpTurnResult result = orchestrator.invoke(Optional.of(skill), "请计算 (12.5 + 7.5) * 3 的结果", 19L, user());
 
         assertThat(result.calls()).extracting(ToolCallSummary::ref)
-                .containsExactly("formula_hint@demo", "unit_convert@demo");
+                .containsExactly("formula_hint@demo", "calculator@demo");
         assertThat(result.calls()).extracting(ToolCallSummary::status).containsOnly("ok");
         assertThat(result.usableContexts()).hasSize(2);
         InOrder order = inOrder(client);
         order.verify(client).call("http://mcp-demo:8090/mcp", "token", "formula_hint",
-                Map.of("query", "Convert 2 km to m"));
-        order.verify(client).call("http://mcp-demo:8090/mcp", "token", "unit_convert",
-                Map.of("value", new java.math.BigDecimal("2"), "fromUnit", "km", "toUnit", "m"));
+                Map.of("query", "请计算 (12.5 + 7.5) * 3 的结果"));
+        order.verify(client).call("http://mcp-demo:8090/mcp", "token", "calculator",
+                Map.of("expression", "(12.5 + 7.5) * 3"));
         ArgumentCaptor<McpToolCall> audits = ArgumentCaptor.forClass(McpToolCall.class);
         org.mockito.Mockito.verify(calls, org.mockito.Mockito.times(2)).saveAndFlush(audits.capture());
         assertThat(audits.getAllValues()).allSatisfy(call -> {
             assertThat(call.getClassId()).isEqualTo(7L);
             assertThat(call.getConversationId()).isEqualTo(19L);
             assertThat(call.getStatus()).isEqualTo(McpToolCallStatus.OK);
+            assertThat(call.getDurationMs()).isNotNegative();
         });
     }
 
@@ -86,6 +87,25 @@ class McpToolOrchestratorTest {
     }
 
     @Test
+    void convertsControlledChinesePowerQuestionToCalculatorArguments() {
+        McpServer server = connectedServer();
+        when(servers.findFirstByClassIdAndName(7L, "demo")).thenReturn(Optional.of(server));
+        when(tools.findFirstByServerIdAndName(null, "calculator"))
+                .thenReturn(Optional.of(new McpTool(null, "calculator", "", "{}")));
+        when(tokens.decrypt("ciphertext")).thenReturn("token");
+        when(client.call(any(), any(), eq("calculator"), any())).thenReturn("2 ** 20 = 1048576");
+        when(calls.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        Skill skill = new Skill(7L, "math", "calculate", "", "calculator@demo", true, "guide", "source");
+
+        McpTurnResult result = orchestrator.invoke(Optional.of(skill), "计算2的20次幂", 19L, user());
+
+        org.mockito.Mockito.verify(client).call("http://mcp-demo:8090/mcp", "token", "calculator",
+                Map.of("expression", "2 ** 20"));
+        assertThat(result.calls()).singleElement().satisfies(call -> assertThat(call.status()).isEqualTo("ok"));
+        assertThat(result.usableContexts()).singleElement();
+    }
+
+    @Test
     void auditsDeniedAndRemoteErrorsAndContinuesWithLaterReferences() {
         McpServer disconnected = new McpServer(7L, "offline", "http://offline/mcp", "ciphertext");
         McpServer connected = connectedServer();
@@ -98,7 +118,7 @@ class McpToolOrchestratorTest {
                 .thenThrow(new McpRemoteException("remote detail must not escape"));
         when(calls.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
         Skill skill = new Skill(7L, "math", "help", "",
-                "formula_hint@offline,unit_convert@demo,formula_hint@demo", true, "guide", "source");
+                "formula_hint@offline,calculator@demo,formula_hint@demo", true, "guide", "source");
 
         McpTurnResult result = orchestrator.invoke(Optional.of(skill), "please help", 19L, user());
 

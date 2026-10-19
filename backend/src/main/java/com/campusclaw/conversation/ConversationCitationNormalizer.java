@@ -1,16 +1,18 @@
 package com.campusclaw.conversation;
 
+import com.campusclaw.retrieval.RetrievalService;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Component;
 
-/** 在对话落库前过滤并连续编号引用；模型完全漏标时只补一条文本最匹配依据。 */
+/** 在对话落库前过滤并连续编号引用；模型漏标时只在存在文本重合时补一条依据。 */
 @Component
 public class ConversationCitationNormalizer {
     private static final Pattern CITATION_MARKER = Pattern.compile("\\[(\\d+)]");
@@ -44,9 +46,13 @@ public class ConversationCitationNormalizer {
         matcher.appendTail(rewritten);
 
         if (assignedNumbers.isEmpty() && !candidatesByNumber.isEmpty()) {
-            ConversationCitation fallback = bestTextualMatch(rewritten.toString(), candidatesByNumber.values());
-            String fallbackContent = rewritten.toString().stripTrailing() + " [1]";
-            return new NormalizedAnswer(fallbackContent, List.of(renumber(fallback, 1)));
+            Optional<ConversationCitation> fallback = bestTextualMatch(
+                    rewritten.toString(), candidatesByNumber.values());
+            if (fallback.isPresent()) {
+                String fallbackContent = rewritten.toString().stripTrailing() + " [1]";
+                return new NormalizedAnswer(fallbackContent, List.of(renumber(fallback.get(), 1)));
+            }
+            return new NormalizedAnswer(RetrievalService.NO_EVIDENCE, List.of());
         }
 
         List<ConversationCitation> usedCitations = new ArrayList<>();
@@ -58,10 +64,11 @@ public class ConversationCitationNormalizer {
     }
 
     /** 模型漏标时只选择正文重合度最高的一条，避免退化为展示全部检索候选。 */
-    private ConversationCitation bestTextualMatch(String answer, Iterable<ConversationCitation> candidates) {
+    private Optional<ConversationCitation> bestTextualMatch(
+            String answer, Iterable<ConversationCitation> candidates) {
         Set<String> answerBigrams = bigrams(answer);
         ConversationCitation best = null;
-        int bestScore = -1;
+        int bestScore = 0;
         for (ConversationCitation candidate : candidates) {
             Set<String> evidenceBigrams = bigrams(candidate.excerpt());
             int score = 0;
@@ -75,7 +82,7 @@ public class ConversationCitationNormalizer {
                 bestScore = score;
             }
         }
-        return best;
+        return Optional.ofNullable(best);
     }
 
     private Set<String> bigrams(String value) {

@@ -35,7 +35,7 @@ public class AskService {
 
     public AskResponse ask(AskRequest request, Long classId) {
         String question = validateQuestion(request.question());
-        SearchResponse evidence = retrieval.search(new SearchRequest(question, SearchMode.HYBRID, 4, null), classId);
+        SearchResponse evidence = retrieval.searchForAnswer(question, classId, 4);
         if (evidence.hits().isEmpty()) {
             return new AskResponse(RetrievalService.NO_EVIDENCE, List.of());
         }

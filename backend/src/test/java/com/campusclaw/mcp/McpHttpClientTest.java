@@ -33,7 +33,12 @@ class McpHttpClientTest {
         List<String> methods = new ArrayList<>();
         HttpServer server = server(exchange -> {
             assertThat(exchange.getRequestHeaders().getFirst("Authorization")).isEqualTo("Bearer demo-token");
-            JsonNode request = mapper.readTree(exchange.getRequestBody());
+            byte[] requestBody = exchange.getRequestBody().readAllBytes();
+            assertThat(exchange.getRequestHeaders().getFirst("Content-Type")).startsWith("application/json");
+            assertThat(exchange.getRequestHeaders().getFirst("Content-Length"))
+                    .isEqualTo(String.valueOf(requestBody.length));
+            assertThat(exchange.getRequestHeaders().getFirst("Transfer-Encoding")).isNull();
+            JsonNode request = mapper.readTree(requestBody);
             methods.add(request.path("method").asText());
             int id = request.path("id").asInt();
             String result = switch (request.path("method").asText()) {

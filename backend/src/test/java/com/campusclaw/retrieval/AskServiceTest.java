@@ -23,7 +23,7 @@ class AskServiceTest {
     void noEvidenceShortCircuitsWithoutChatCall() {
         RetrievalService retrieval = mock(RetrievalService.class);
         ChatGateway chat = mock(ChatGateway.class);
-        when(retrieval.search(any(), eq(1L))).thenReturn(
+        when(retrieval.searchForAnswer(eq("问题"), eq(1L), eq(4))).thenReturn(
                 new SearchResponse(SearchMode.HYBRID, RetrievalService.NO_EVIDENCE, List.of()));
         AskService service = new AskService(retrieval, chat, properties());
 
@@ -42,7 +42,7 @@ class AskServiceTest {
         ChatGateway chat = mock(ChatGateway.class);
         RetrievalHit hit = new RetrievalHit(3L, "本班讲义", 4L, 5L, 0, 0, 4,
                 "本班依据", 1, 0.03, 1.0, 1, 0.8, 1);
-        when(retrieval.search(any(), eq(1L))).thenReturn(
+        when(retrieval.searchForAnswer(eq("问题"), eq(1L), eq(4))).thenReturn(
                 new SearchResponse(SearchMode.HYBRID, null, List.of(hit)));
         when(chat.complete(any())).thenReturn("结论 [1]，忽略伪引用 [9]");
         AskService service = new AskService(retrieval, chat, properties());
@@ -76,7 +76,7 @@ class AskServiceTest {
         ChatGateway chat = mock(ChatGateway.class);
         RetrievalHit hit = new RetrievalHit(3L, "本班讲义", 4L, 5L, 0, 0, 4,
                 "本班依据", 1, 0.03, 1.0, 1, 0.8, 1);
-        when(retrieval.search(any(), eq(1L))).thenReturn(
+        when(retrieval.searchForAnswer(eq("问题"), eq(1L), eq(4))).thenReturn(
                 new SearchResponse(SearchMode.HYBRID, null, List.of(hit)));
         when(chat.complete(any())).thenThrow(new DependencyUnavailableException("Chat service"));
 
@@ -90,7 +90,7 @@ class AskServiceTest {
     void normalizesCommonCitationFormatsAndRemovesOutOfRangeNumbers() {
         RetrievalService retrieval = mock(RetrievalService.class);
         ChatGateway chat = mock(ChatGateway.class);
-        when(retrieval.search(any(), eq(1L))).thenReturn(new SearchResponse(
+        when(retrieval.searchForAnswer(eq("问题"), eq(1L), eq(4))).thenReturn(new SearchResponse(
                 SearchMode.HYBRID, null, List.of(hit(3L, "第一份依据"), hit(6L, "第二份依据"))));
         when(chat.complete(any())).thenReturn("结论【1】，补充（2），忽略越界［9］");
 
@@ -108,7 +108,7 @@ class AskServiceTest {
     void renumbersOnlyUsedCandidatesByFirstAppearance() {
         RetrievalService retrieval = mock(RetrievalService.class);
         ChatGateway chat = mock(ChatGateway.class);
-        when(retrieval.search(any(), eq(1L))).thenReturn(new SearchResponse(
+        when(retrieval.searchForAnswer(eq("问题"), eq(1L), eq(4))).thenReturn(new SearchResponse(
                 SearchMode.HYBRID, null, List.of(
                 hit(11L, "依据一"), hit(12L, "依据二"), hit(13L, "依据三"), hit(14L, "依据四"))));
         when(chat.complete(any())).thenReturn("第四条先出现 [4]，第二条随后出现 [2]，再次引用 [4]");
@@ -126,7 +126,7 @@ class AskServiceTest {
     void repairsAnAnswerThatInitiallyOmitsCitations() {
         RetrievalService retrieval = mock(RetrievalService.class);
         ChatGateway chat = mock(ChatGateway.class);
-        when(retrieval.search(any(), eq(1L))).thenReturn(
+        when(retrieval.searchForAnswer(eq("问题"), eq(1L), eq(4))).thenReturn(
                 new SearchResponse(SearchMode.HYBRID, null, List.of(hit(3L, "本班依据"))));
         when(chat.complete(any())).thenReturn("没有编号的初稿", "带依据的修订回答 [1]");
 
@@ -142,7 +142,7 @@ class AskServiceTest {
     void replacesAnAnswerThatStillHasNoCitationsWithInspectableEvidence() {
         RetrievalService retrieval = mock(RetrievalService.class);
         ChatGateway chat = mock(ChatGateway.class);
-        when(retrieval.search(any(), eq(1L))).thenReturn(new SearchResponse(
+        when(retrieval.searchForAnswer(eq("问题"), eq(1L), eq(4))).thenReturn(new SearchResponse(
                 SearchMode.HYBRID, null, List.of(hit(3L, "第一份依据"), hit(6L, "第二份依据"))));
         when(chat.complete(any())).thenReturn("没有编号的初稿", "仍然没有编号");
 
@@ -168,6 +168,6 @@ class AskServiceTest {
                 new AppProperties.Embedding("http://localhost/v1", "key", "embed", 3),
                 new AppProperties.Chat("http://localhost/v1", "key", "chat", "none"),
                 new AppProperties.Retrieval(Duration.ofSeconds(1), Duration.ofSeconds(2),
-                        1000, 10, 20, 0.35, 60, false));
+                        1000, 10, 20, 0.35, 0.55, 0.45, 60, false));
     }
 }

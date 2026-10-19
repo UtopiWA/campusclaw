@@ -50,7 +50,16 @@ public record AppProperties(
             @Min(1) int defaultLimit,
             @Min(1) @Max(100) int maxLimit,
             @DecimalMin("0.0") @DecimalMax("1.0") double vectorThreshold,
+            @DecimalMin("0.0") @DecimalMax("1.0") double answerStrongVectorThreshold,
+            @DecimalMin("0.0") @DecimalMax("1.0") double answerCorroboratedVectorThreshold,
             @Min(1) int rrfK,
             boolean initializeVectorStore) {
+        public Retrieval {
+            if (vectorThreshold > answerCorroboratedVectorThreshold
+                    || answerCorroboratedVectorThreshold > answerStrongVectorThreshold) {
+                throw new IllegalArgumentException(
+                        "Retrieval thresholds must satisfy vector <= corroborated <= strong");
+            }
+        }
     }
 }

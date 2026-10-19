@@ -1,5 +1,6 @@
 package com.campusclaw.agent;
 
+import com.campusclaw.mcp.CalculatorExpressionAdapter;
 import com.campusclaw.persistence.AssistantSkillRepository;
 import com.campusclaw.persistence.Skill;
 import com.campusclaw.persistence.SkillRepository;
@@ -66,7 +67,18 @@ public class SkillRouter {
         if (score == 0 && isBroadExerciseGuide(skill, distinct) && looksLikeExercise(normalizedQuestion)) {
             score = 1;
         }
+        if (score == 0 && hasCalculator(skill)
+                && CalculatorExpressionAdapter.adapt(normalizedQuestion).isPresent()) {
+            score = 1;
+        }
         return score;
+    }
+
+    /** 计算器技能对可安全适配的纯计算请求提供兜底，不要求用户复述配置中的长触发短语。 */
+    private boolean hasCalculator(Skill skill) {
+        return skill.getToolRefs() != null && List.of(skill.getToolRefs().split(",")).stream()
+                .map(String::trim)
+                .anyMatch(ref -> ref.startsWith("calculator@"));
     }
 
     /** 将“各类习题”这类类别条件映射到固定题目特征，仍保持完全可重复的服务端路由。 */

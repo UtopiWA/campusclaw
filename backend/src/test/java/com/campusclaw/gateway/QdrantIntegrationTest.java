@@ -71,7 +71,7 @@ class QdrantIntegrationTest {
                 new AppProperties.Embedding("http://localhost/v1", "key", "embed", dimension),
                 new AppProperties.Chat("http://localhost/v1", "key", "chat", "none"),
                 new AppProperties.Retrieval(Duration.ofSeconds(2), Duration.ofSeconds(5),
-                        1000, 10, 20, 0.35, 60, false));
+                        1000, 10, 20, 0.35, 0.55, 0.45, 60, false));
     }
 
     private JsonNode pointPayload(String url, long pointId) throws Exception {

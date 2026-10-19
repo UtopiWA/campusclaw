@@ -150,4 +150,31 @@ class ChunkingServiceTest {
         assertThat(chunks.get(0).startOffset()).isZero();
         assertThat(chunks.get(0).endOffset()).isLessThanOrEqualTo(body.codePointCount(0, body.length()));
     }
+
+    @Test
+    void hierarchyIgnoresPseudoHeadingsInsideCodeAndMathFences() {
+        String text = """
+                # 真实标题
+                ```markdown
+                # 代码中的伪标题
+                示例
+                ```
+                $$
+                # 公式中的伪标题
+                x=1
+                $$
+                围栏后的正文
+                ## 下一节
+                下一节正文
+                """;
+
+        List<ChunkDraft> chunks = service.chunkEntries(
+                List.of(new ChunkingService.SourceEntry(1L, text)), ChunkingOptions.hierarchy());
+
+        assertThat(chunks).hasSize(2);
+        assertThat(chunks.get(0).text())
+                .startsWith("# 真实标题\n```markdown")
+                .contains("# 代码中的伪标题", "# 公式中的伪标题", "围栏后的正文");
+        assertThat(chunks.get(1).text()).startsWith("# 真实标题\n## 下一节\n下一节正文");
+    }
 }

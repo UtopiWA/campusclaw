@@ -32,12 +32,14 @@ public class McpToolCall {
     private McpToolCallStatus status;
     @Column(nullable = false, length = 512)
     private String detail;
+    @Column(name = "duration_ms")
+    private Long durationMs;
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     protected McpToolCall() { }
     public McpToolCall(Long classId, Long serverId, Long userId, Long conversationId,
-                       String toolRef, McpToolCallStatus status, String detail) {
+                       String toolRef, McpToolCallStatus status, String detail, Long durationMs) {
         this.classId = classId;
         this.serverId = serverId;
         this.userId = userId;
@@ -45,6 +47,7 @@ public class McpToolCall {
         this.toolRef = toolRef;
         this.status = status;
         this.detail = detail;
+        this.durationMs = durationMs;
     }
     @PrePersist
     void onCreate() { createdAt = Instant.now(); }
@@ -56,5 +59,6 @@ public class McpToolCall {
     public String getToolRef() { return toolRef; }
     public McpToolCallStatus getStatus() { return status; }
     public String getDetail() { return detail; }
+    public Long getDurationMs() { return durationMs; }
     public Instant getCreatedAt() { return createdAt; }
 }

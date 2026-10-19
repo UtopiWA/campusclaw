@@ -77,6 +77,7 @@ class AgentConversationServiceTest {
         when(conversations.requireOwned(9L, user)).thenReturn(conversation);
         when(assistants.findByIdAndClassId(3L, 2L)).thenReturn(Optional.of(assistant));
         when(router.route(3L, 2L, "方程问题")).thenReturn(Optional.of(skill));
+        when(skill.getToolRefs()).thenReturn("knowledge_search,formula_hint@demo");
         when(materials.findAllByAssistantId(3L)).thenReturn(List.of(new AssistantMaterial(3L, 11L)));
         when(conversations.saveUserMessage(9L, "方程问题", user)).thenReturn(userMessage);
         when(userMessage.getId()).thenReturn(20L);
@@ -196,11 +197,9 @@ class AgentConversationServiceTest {
         when(conversations.requireOwned(9L, user)).thenReturn(conversation);
         when(assistants.findByIdAndClassId(3L, 2L)).thenReturn(Optional.of(assistant));
         when(router.route(3L, 2L, "提示我下一步")).thenReturn(Optional.of(skill));
-        when(materials.findAllByAssistantId(3L)).thenReturn(List.of());
+        when(skill.getToolRefs()).thenReturn("formula_hint@demo");
         when(conversations.saveUserMessage(9L, "提示我下一步", user)).thenReturn(userMessage);
         when(userMessage.getId()).thenReturn(20L);
-        when(retrieval.searchBound("提示我下一步", 2L, java.util.Set.of(), 4))
-                .thenReturn(new SearchResponse(SearchMode.HYBRID, RetrievalService.NO_EVIDENCE, List.of()));
         when(mcpTools.invoke(Optional.of(skill), "提示我下一步", 9L, user)).thenReturn(toolResult);
         when(conversations.historyBefore(9L, 20L)).thenReturn(List.of());
         when(prompts.build(assistant, Optional.of(skill), List.of(), toolResult, List.of(), "提示我下一步"))
@@ -210,6 +209,7 @@ class AgentConversationServiceTest {
         AgentTurnPreparation result = service.prepare(9L, "提示我下一步", user);
 
         assertThat(result.stream()).isSameAs(stream);
+        verifyNoInteractions(materials, retrieval);
         verify(chat).openStream(plan.messages());
     }
 

@@ -28,6 +28,8 @@ class AppPropertiesBindingTest {
                     "app.retrieval.default-limit=10",
                     "app.retrieval.max-limit=20",
                     "app.retrieval.vector-threshold=0.35",
+                    "app.retrieval.answer-strong-vector-threshold=0.55",
+                    "app.retrieval.answer-corroborated-vector-threshold=0.45",
                     "app.retrieval.rrf-k=60");
 
     @Test
@@ -42,6 +44,25 @@ class AppPropertiesBindingTest {
             assertThat(root.getMessage()).contains("app.embedding", "apiKey");
             assertThat(root.getMessage()).doesNotContain("chat-secret-value");
         });
+    }
+
+    @Test
+    void bindsOrderedAnswerEvidenceThresholds() {
+        runner.withPropertyValues("app.embedding.api-key=embedding-secret-value").run(context -> {
+            assertThat(context).hasNotFailed();
+            AppProperties.Retrieval retrieval = context.getBean(AppProperties.class).retrieval();
+            assertThat(retrieval.vectorThreshold()).isEqualTo(0.35);
+            assertThat(retrieval.answerCorroboratedVectorThreshold()).isEqualTo(0.45);
+            assertThat(retrieval.answerStrongVectorThreshold()).isEqualTo(0.55);
+        });
+    }
+
+    @Test
+    void rejectsThresholdsInUnsafeOrder() {
+        runner.withPropertyValues(
+                "app.embedding.api-key=embedding-secret-value",
+                "app.retrieval.answer-strong-vector-threshold=0.40")
+                .run(context -> assertThat(context).hasFailed());
     }
 
     @Configuration(proxyBeanMethods = false)

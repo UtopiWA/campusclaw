@@ -93,7 +93,7 @@ def run(context) -> None:
     first_tools = context.http.request("GET", f"/api/mcp/servers/{server_id}/tools", token=teacher["token"])
     require_equal(first_tools.status, 200, "首次连接后应能读取完整工具缓存")
     first_tool_list = require_list(first_tools.json(), "首次工具响应应为数组")
-    require_equal({item.get("name") for item in first_tool_list}, {"formula_hint", "unit_convert"},
+    require_equal({item.get("name") for item in first_tool_list}, {"formula_hint", "calculator"},
                   "完整目录应发现两个确定性工具")
 
     switched = context.http.request(

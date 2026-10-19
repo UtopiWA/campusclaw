@@ -85,7 +85,7 @@ public class ConversationController {
             @ApiResponse(responseCode = "200", description = "UTF-8 SSE 事件流",
                     content = @Content(mediaType = MediaType.TEXT_EVENT_STREAM_VALUE,
                             schema = @Schema(type = "string"),
-                            examples = @ExampleObject(value = "event: meta\\ndata: {\"status\":\"ready\",\"skillName\":\"单位换算\",\"citations\":[],\"toolCalls\":[{\"ref\":\"unit_convert@demo\",\"status\":\"ok\",\"detail\":\"2 km = 2000 m\"}]}\\n\\nevent: delta\\ndata: {\"text\":\"回答\"}\\n\\nevent: done\\ndata: {\"messageId\":1}\\n\\n"))),
+                            examples = @ExampleObject(value = "event: meta\\ndata: {\"status\":\"ready\",\"skillName\":\"数学计算\",\"citations\":[],\"toolCalls\":[{\"ref\":\"calculator@demo\",\"status\":\"ok\",\"detail\":\"(2 + 3) * 4 = 20\"}]}\\n\\nevent: delta\\ndata: {\"text\":\"回答\"}\\n\\nevent: done\\ndata: {\"messageId\":1}\\n\\n"))),
             @ApiResponse(responseCode = "400", description = "问题不合法"),
             @ApiResponse(responseCode = "401", description = "未登录"),
             @ApiResponse(responseCode = "403", description = "无权限"),

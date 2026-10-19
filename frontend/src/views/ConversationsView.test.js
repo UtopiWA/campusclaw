@@ -69,7 +69,7 @@ describe('ConversationsView', () => {
     state.getConversation.mockResolvedValue({
       ...detail(), messages: [{
         id: 18, role: 'assistant', content: 'The converted value is 2000 m.', status: 'COMPLETED', citations: [],
-        toolCalls: [{ ref: 'unit_convert@demo', status: 'ok', detail: '2 km = 2000 m' }],
+        toolCalls: [{ ref: 'calculator@demo', status: 'ok', detail: '(2 + 3) * 4 = 20' }],
       }],
     })
     const wrapper = mount(ConversationsView, { global })
@@ -77,9 +77,36 @@ describe('ConversationsView', () => {
 
     const toolBlock = wrapper.find('.conversation-tools')
     const answer = wrapper.find('.chat-answer')
-    expect(toolBlock.text()).toContain('unit_convert@demo')
-    expect(toolBlock.text()).toContain('ok · 2 km = 2000 m')
+    expect(toolBlock.text()).toContain('计算器 · calculator@demo')
+    expect(toolBlock.text()).toContain('调用成功 · (2 + 3) * 4 = 20')
     expect(toolBlock.element.compareDocumentPosition(answer.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    const process = wrapper.find('.conversation-process')
+    expect(process.attributes('open')).toBeUndefined()
+    expect(process.text()).toContain('AI 执行过程')
+    expect(process.text()).toContain('当前消息未记录命中的技能')
+    expect(process.text()).toContain('回答正文未采用可展示的讲义引用')
+    expect(process.text()).toContain('MCP 工具 · 计算器 · calculator@demo')
+    expect(process.text()).toContain('回答已完成并保存')
+  })
+
+  it('builds the expandable process only from persisted skill, citation, tool and message facts', async () => {
+    state.getConversation.mockResolvedValue({
+      ...detail(), messages: [{
+        id: 21, role: 'assistant', content: '请先检查定义 [1]', skillName: '解题引导', status: 'FAILED',
+        citations: [{ number: 1, materialId: 7, materialTitle: '函数讲义', chunkId: 42, excerpt: '定义域说明' }],
+        toolCalls: [{ ref: 'formula_hint@demo', status: 'denied', detail: '服务未连接' }],
+      }],
+    })
+    const wrapper = mount(ConversationsView, { global })
+    await flushPromises()
+
+    const process = wrapper.find('.conversation-process')
+    expect(process.text()).toContain('命中“解题引导”技能')
+    expect(process.text()).toContain('回答正文采用 1 条讲义引用')
+    expect(process.text()).toContain('调用被拒绝：服务未连接')
+    expect(process.text()).toContain('回答中断')
+    expect(process.text()).not.toContain('耗时')
   })
 
   it('only lists retrieval candidates that are actually cited by the answer', async () => {
@@ -99,6 +126,72 @@ describe('ConversationsView', () => {
     expect(wrapper.findAll('.chat-citation')).toHaveLength(1)
     expect(wrapper.text()).toContain('[2] 采用讲义')
     expect(wrapper.text()).not.toContain('未采用讲义')
+  })
+
+  it('collapses every citation excerpt by default and toggles the complete text', async () => {
+    const multilineExcerpt = '第一行\n第二行\n第三行'
+    state.getConversation.mockResolvedValue({
+      ...detail(), messages: [{
+        id: 23, role: 'assistant', content: '多行片段回答 [1]', status: 'COMPLETED',
+        citations: [{ number: 1, materialId: 7, materialTitle: '多行讲义', chunkId: 42, excerpt: multilineExcerpt }],
+      }],
+    })
+    const wrapper = mount(ConversationsView, { global })
+    await flushPromises()
+
+    const toggle = wrapper.find('.chat-citation-toggle')
+    const excerpt = wrapper.find('.chat-citation p')
+    expect(excerpt.text()).toBe(multilineExcerpt)
+    expect(excerpt.attributes('style')).toContain('display: none')
+    expect(toggle.text()).toBe('展开片段')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+
+    await toggle.trigger('click')
+    expect(excerpt.attributes('style') || '').not.toContain('display: none')
+    expect(excerpt.text()).toBe(multilineExcerpt)
+    expect(toggle.text()).toBe('收起片段')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+
+    await toggle.trigger('click')
+    expect(excerpt.attributes('style')).toContain('display: none')
+  })
+
+  it('renders safe Markdown and KaTeX while keeping citations interactive', async () => {
+    state.getConversation.mockResolvedValue({
+      ...detail(), messages: [{
+        id: 22, role: 'assistant', status: 'COMPLETED',
+        content: '## 结论\n\n**速度**满足 \\(v=\\frac{s}{t}\\)。<script>alert(1)</script> [1]\n\n\\[a^2+b^2=c^2\\]',
+        citations: [{ number: 1, materialId: 7, materialTitle: '公式讲义', chunkId: 42, excerpt: '公式来源' }],
+      }],
+    })
+    const wrapper = mount(ConversationsView, { global, attachTo: document.body })
+    await flushPromises()
+
+    expect(wrapper.find('.chat-markdown h2').text()).toBe('结论')
+    expect(wrapper.find('.chat-markdown strong').text()).toBe('速度')
+    expect(wrapper.findAll('.chat-markdown .katex').length).toBeGreaterThanOrEqual(2)
+    expect(wrapper.find('.chat-markdown .katex-display').exists()).toBe(true)
+    expect(wrapper.find('.chat-markdown script').exists()).toBe(false)
+    await wrapper.find('.chat-inline-citation').trigger('click')
+    expect(document.activeElement).toBe(wrapper.find('.chat-citation').element)
+    wrapper.unmount()
+  })
+
+  it('scrolls to the latest message after a conversation finishes rendering', async () => {
+    const originalScrollTo = HTMLElement.prototype.scrollTo
+    const scrollTo = vi.fn()
+    HTMLElement.prototype.scrollTo = scrollTo
+    const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => 900 })
+    const wrapper = mount(ConversationsView, { global })
+    await flushPromises()
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 900, behavior: 'auto' })
+    wrapper.unmount()
+    if (originalScrollTo) HTMLElement.prototype.scrollTo = originalScrollTo
+    else delete HTMLElement.prototype.scrollTo
+    if (scrollHeight) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeight)
+    else delete HTMLElement.prototype.scrollHeight
   })
 
   it('does not show citation cards when the answer contains no valid marker', async () => {
@@ -280,6 +373,7 @@ describe('ConversationsView', () => {
       .mockResolvedValueOnce([])
     const wrapper = mount(ConversationsView, { global })
     await flushPromises()
+    await wrapper.find('.conversation-composer-wrap textarea').setValue('尚未发送的草稿')
 
     await wrapper.find('[aria-label="删除会话 函数追问"]').trigger('click')
     expect(state.deleteConversation).not.toHaveBeenCalled()
@@ -288,6 +382,7 @@ describe('ConversationsView', () => {
 
     expect(state.deleteConversation).toHaveBeenCalledWith(9)
     expect(state.push).toHaveBeenCalledWith('/conversations')
+    expect(wrapper.find('.conversation-composer-wrap').exists()).toBe(false)
     expect(wrapper.text()).toContain('选择一个智能体开始')
   })
 })

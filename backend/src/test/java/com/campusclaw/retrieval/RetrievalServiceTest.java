@@ -131,6 +131,55 @@ class RetrievalServiceTest {
                         any(), eq(1L), eq(IndexStatus.READY), eq(Set.of(8L)));
     }
 
+    @Test
+    void answerSearchKeepsStrongVectorAndCorroboratedCandidatesButDirectSearchKeepsWideRecall() {
+        List<KnowledgeChunk> ready = List.of(
+                readyChunk(1L, 1L, 8L), readyChunk(2L, 1L, 8L),
+                readyChunk(3L, 1L, 8L), readyChunk(4L, 1L, 8L));
+        stubReadyRows(ready);
+        List<KnowledgeChunkRepository.KeywordHitProjection> keywordHits = List.of(
+                keywordHit(1L, 8.0), keywordHit(2L, 2.0), keywordHit(4L, 1.0));
+        when(chunks.searchReady(1L, "边界问题", 12)).thenReturn(keywordHits);
+        when(embeddings.embed(List.of("边界问题"))).thenReturn(List.of(List.of(0.1, 0.2, 0.3)));
+        when(vectors.search(List.of(0.1, 0.2, 0.3), 1L, 12, 0.35)).thenReturn(List.of(
+                new VectorStoreGateway.VectorMatch(3L, 0.56),
+                new VectorStoreGateway.VectorMatch(2L, 0.46),
+                new VectorStoreGateway.VectorMatch(4L, 0.44)));
+
+        SearchResponse answer = service.searchForAnswer("边界问题", 1L, 4);
+        SearchResponse direct = service.search(new SearchRequest("边界问题", SearchMode.HYBRID, 4, null), 1L);
+
+        assertThat(answer.hits()).extracting(RetrievalHit::chunkId).containsExactly(2L, 3L);
+        assertThat(answer.hits()).extracting(RetrievalHit::rank).containsExactly(1, 2);
+        assertThat(direct.hits()).extracting(RetrievalHit::chunkId)
+                .containsExactlyInAnyOrder(1L, 2L, 3L, 4L);
+    }
+
+    @Test
+    void answerSearchReturnsNoEvidenceWhenOnlyKeywordOrWeakDualCandidatesExist() {
+        List<KnowledgeChunk> ready = List.of(readyChunk(1L, 1L, 8L), readyChunk(2L, 1L, 8L));
+        stubReadyRows(ready);
+        List<KnowledgeChunkRepository.KeywordHitProjection> keywordHits = List.of(
+                keywordHit(1L, 9.0), keywordHit(2L, 4.0));
+        when(chunks.searchReady(1L, "无关问题", 12)).thenReturn(keywordHits);
+        when(embeddings.embed(List.of("无关问题"))).thenReturn(List.of(List.of(0.1, 0.2, 0.3)));
+        when(vectors.search(List.of(0.1, 0.2, 0.3), 1L, 12, 0.35))
+                .thenReturn(List.of(new VectorStoreGateway.VectorMatch(2L, 0.44)));
+
+        SearchResponse response = service.searchForAnswer("无关问题", 1L, 4);
+
+        assertThat(response.hits()).isEmpty();
+        assertThat(response.message()).isEqualTo(RetrievalService.NO_EVIDENCE);
+    }
+
+    private KnowledgeChunkRepository.KeywordHitProjection keywordHit(Long id, double score) {
+        KnowledgeChunkRepository.KeywordHitProjection hit = mock(
+                KnowledgeChunkRepository.KeywordHitProjection.class);
+        when(hit.getId()).thenReturn(id);
+        when(hit.getKeywordScore()).thenReturn(score);
+        return hit;
+    }
+
     private KnowledgeChunk readyChunk(Long id, Long classId, Long materialId) {
         KnowledgeChunk chunk = mock(KnowledgeChunk.class);
         when(chunk.getId()).thenReturn(id);
@@ -161,6 +210,6 @@ class RetrievalServiceTest {
                 new AppProperties.Embedding("http://localhost/v1", "key", "embed", 3),
                 new AppProperties.Chat("http://localhost/v1", "key", "chat", "none"),
                 new AppProperties.Retrieval(Duration.ofSeconds(1), Duration.ofSeconds(2),
-                        1000, 10, 20, 0.35, 60, false));
+                        1000, 10, 20, 0.35, 0.55, 0.45, 60, false));
     }
 }

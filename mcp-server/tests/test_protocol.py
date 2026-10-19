@@ -11,7 +11,7 @@ class ProtocolTest(unittest.TestCase):
         initialized = dispatch({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         self.assertEqual("2025-03-26", initialized["result"]["protocolVersion"])
         listed = dispatch({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
-        self.assertEqual({"formula_hint", "unit_convert"}, {tool["name"] for tool in listed["result"]["tools"]})
+        self.assertEqual({"formula_hint", "calculator"}, {tool["name"] for tool in listed["result"]["tools"]})
 
     def test_rejects_unknown_method(self):
         response = dispatch({"jsonrpc": "2.0", "id": 3, "method": "unknown", "params": {}})

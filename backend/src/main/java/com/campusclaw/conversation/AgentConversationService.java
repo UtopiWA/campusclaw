@@ -3,6 +3,8 @@ package com.campusclaw.conversation;
 import com.campusclaw.agent.SkillRouter;
 import com.campusclaw.common.NotFoundException;
 import com.campusclaw.gateway.ChatGateway;
+import com.campusclaw.mcp.McpToolOrchestrator;
+import com.campusclaw.mcp.McpTurnResult;
 import com.campusclaw.persistence.Assistant;
 import com.campusclaw.persistence.AssistantMaterialRepository;
 import com.campusclaw.persistence.AssistantRepository;
@@ -10,9 +12,8 @@ import com.campusclaw.persistence.Conversation;
 import com.campusclaw.persistence.ConversationMessage;
 import com.campusclaw.persistence.Skill;
 import com.campusclaw.persistence.UserAccount;
-import com.campusclaw.mcp.McpToolOrchestrator;
-import com.campusclaw.mcp.McpTurnResult;
 import com.campusclaw.retrieval.RetrievalService;
+import com.campusclaw.retrieval.SearchMode;
 import com.campusclaw.retrieval.SearchResponse;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -56,12 +57,17 @@ public class AgentConversationService {
         Assistant assistant = assistants.findByIdAndClassId(conversation.getAssistantId(), user.getClassId())
                 .orElseThrow(NotFoundException::new);
         Optional<Skill> selectedSkill = skillRouter.route(assistant.getId(), user.getClassId(), question);
-        Set<Long> materialIds = assistantMaterials.findAllByAssistantId(assistant.getId()).stream()
-                .map(link -> link.getMaterialId())
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        boolean usesKnowledgeSearch = usesKnowledgeSearch(selectedSkill);
+        Set<Long> materialIds = usesKnowledgeSearch
+                ? assistantMaterials.findAllByAssistantId(assistant.getId()).stream()
+                        .map(link -> link.getMaterialId())
+                        .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new))
+                : Set.of();
 
         ConversationMessage userMessage = conversations.saveUserMessage(conversationId, question, user);
-        SearchResponse search = retrieval.searchBound(question, user.getClassId(), materialIds, 4);
+        SearchResponse search = usesKnowledgeSearch
+                ? retrieval.searchBound(question, user.getClassId(), materialIds, 4)
+                : new SearchResponse(SearchMode.HYBRID, RetrievalService.NO_EVIDENCE, List.of());
         McpTurnResult toolResult = mcpTools.invoke(selectedSkill, question, conversationId, user);
         List<HistoryMessage> history = conversations.historyBefore(conversationId, userMessage.getId());
         AgentTurnPlan plan = prompts.build(assistant, selectedSkill, search.hits(), toolResult, history, question);
@@ -70,6 +76,15 @@ public class AgentConversationService {
                 ? new FixedTextStream(RetrievalService.NO_EVIDENCE)
                 : chat.openStream(plan.messages());
         return new AgentTurnPreparation(conversationId, user.getId(), user.getClassId(), plan, stream);
+    }
+
+    /** 未命中技能时沿用默认检索；命中技能后则尊重其 knowledge_search 显式选择。 */
+    private boolean usesKnowledgeSearch(Optional<Skill> selectedSkill) {
+        if (selectedSkill.isEmpty()) return true;
+        String refs = selectedSkill.get().getToolRefs();
+        if (refs == null || refs.isBlank()) return true;
+        return List.of(refs.split(",")).stream().map(String::trim)
+                .anyMatch("knowledge_search"::equals);
     }
 
     private static final class FixedTextStream implements ChatGateway.ChatStream {

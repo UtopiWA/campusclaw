@@ -66,6 +66,18 @@ class SkillRouterTest {
         assertThat(router.route(4L, 2L, "今天我们学习了新的章节")).isEmpty();
     }
 
+    @Test
+    void calculatorSkillMatchesAnAdaptableExpressionWhenNaturalLanguageTriggerDoesNot() {
+        when(bindings.findAllByAssistantId(4L)).thenReturn(List.of(binding(4L, 9L)));
+        Skill calculator = skill(9L, "需要进行四则运算,括号,乘方,取模及一些数学函数的计算时");
+        when(calculator.getToolRefs()).thenReturn("calculator@campus-tools");
+        when(skills.findAllByIdInAndClassIdAndEnabledTrue(any(), eq(2L))).thenReturn(List.of(calculator));
+
+        assertThat(router.route(4L, 2L, "请计算 sqrt(81) + 2 ** 5")).contains(calculator);
+        assertThat(router.route(4L, 2L, "计算2的20次幂")).contains(calculator);
+        assertThat(router.route(4L, 2L, "请说明勾股定理")).isEmpty();
+    }
+
     private AssistantSkill binding(Long assistantId, Long skillId) {
         return new AssistantSkill(assistantId, skillId);
     }

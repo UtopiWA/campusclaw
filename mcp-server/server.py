@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hmac
 import json
 import math
@@ -13,6 +14,7 @@ from typing import Any
 MAX_BODY_BYTES = 64 * 1024
 PROTOCOL_VERSION = "2025-03-26"
 INJECTION_PROBE = "__campusclaw_injection_probe__"
+MAX_EXPONENT = 100
 
 TOOLS = [
     {
@@ -26,23 +28,30 @@ TOOLS = [
         },
     },
     {
-        "name": "unit_convert",
-        "description": "在长度单位 mm/cm/m/km 或质量单位 g/kg 之间换算。",
+        "name": "calculator",
+        "description": "安全计算四则运算、括号、乘方、取模以及 sqrt/abs/round/min/max/pow 表达式；乘方指数绝对值不超过 100。",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "value": {"type": "number"},
-                "fromUnit": {"type": "string", "enum": ["mm", "cm", "m", "km", "g", "kg"]},
-                "toUnit": {"type": "string", "enum": ["mm", "cm", "m", "km", "g", "kg"]},
+                "expression": {"type": "string", "minLength": 1, "maxLength": 200},
             },
-            "required": ["value", "fromUnit", "toUnit"],
+            "required": ["expression"],
             "additionalProperties": False,
         },
     },
 ]
 
-LENGTH_FACTORS = {"mm": 0.001, "cm": 0.01, "m": 1.0, "km": 1000.0}
-MASS_FACTORS = {"g": 1.0, "kg": 1000.0}
+BIN_OPS = {
+    ast.Add: lambda left, right: left + right,
+    ast.Sub: lambda left, right: left - right,
+    ast.Mult: lambda left, right: left * right,
+    ast.Div: lambda left, right: left / right,
+    ast.FloorDiv: lambda left, right: left // right,
+    ast.Mod: lambda left, right: left % right,
+    ast.Pow: lambda left, right: left ** right,
+}
+UNARY_OPS = {ast.UAdd: lambda value: value, ast.USub: lambda value: -value}
+FUNCTIONS = {"sqrt": math.sqrt, "abs": abs, "round": round, "min": min, "max": max, "pow": pow}
 
 
 def formula_hint(arguments: dict[str, Any]) -> str:
@@ -64,23 +73,46 @@ def formula_hint(arguments: dict[str, Any]) -> str:
     return "先写出已知量、未知量和它们之间的等量关系，再只推进一步。"
 
 
-def unit_convert(arguments: dict[str, Any]) -> str:
-    if set(arguments) != {"value", "fromUnit", "toUnit"}:
-        raise ValueError("arguments must contain value, fromUnit and toUnit")
-    value = arguments.get("value")
-    source = arguments.get("fromUnit")
-    target = arguments.get("toUnit")
-    if (not isinstance(value, (int, float)) or isinstance(value, bool)
-            or not math.isfinite(float(value))):
-        raise ValueError("value must be a number")
-    group = LENGTH_FACTORS if source in LENGTH_FACTORS and target in LENGTH_FACTORS else None
-    if source in MASS_FACTORS and target in MASS_FACTORS:
-        group = MASS_FACTORS
-    if group is None:
-        raise ValueError("units must belong to the same supported dimension")
-    converted = float(value) * group[source] / group[target]
-    formatted = f"{converted:.12g}"
-    return f"{value:g} {source} = {formatted} {target}"
+def calculator(arguments: dict[str, Any]) -> str:
+    if set(arguments) != {"expression"}:
+        raise ValueError("arguments must contain only expression")
+    expression = arguments.get("expression")
+    if not isinstance(expression, str) or not expression.strip() or len(expression) > 200:
+        raise ValueError("expression must be a non-empty string of at most 200 characters")
+    try:
+        tree = ast.parse(expression.strip(), mode="eval")
+        if sum(1 for _ in ast.walk(tree)) > 64:
+            raise ValueError("expression is too complex")
+        value = evaluate_expression(tree.body)
+    except (SyntaxError, ArithmeticError, OverflowError, TypeError) as exc:
+        raise ValueError("expression is invalid") from exc
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+        raise ValueError("expression must produce a finite number")
+    if abs(value) > 1e100:
+        raise ValueError("result is too large")
+    formatted = str(value) if isinstance(value, int) else f"{value:.12g}"
+    return f"{expression.strip()} = {formatted}"
+
+
+def evaluate_expression(node: ast.AST) -> int | float:
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+        return node.value
+    if isinstance(node, ast.UnaryOp) and type(node.op) in UNARY_OPS:
+        return UNARY_OPS[type(node.op)](evaluate_expression(node.operand))
+    if isinstance(node, ast.BinOp) and type(node.op) in BIN_OPS:
+        left = evaluate_expression(node.left)
+        right = evaluate_expression(node.right)
+        if isinstance(node.op, ast.Pow) and abs(right) > MAX_EXPONENT:
+            raise ValueError("exponent is too large")
+        return BIN_OPS[type(node.op)](left, right)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in FUNCTIONS:
+        if node.keywords or not 1 <= len(node.args) <= 10:
+            raise ValueError("function arguments are invalid")
+        values = [evaluate_expression(argument) for argument in node.args]
+        if node.func.id == "pow" and len(values) == 2 and abs(values[1]) > MAX_EXPONENT:
+            raise ValueError("exponent is too large")
+        return FUNCTIONS[node.func.id](*values)
+    raise ValueError("unsupported expression")
 
 
 def success(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
@@ -114,7 +146,7 @@ def dispatch(payload: Any, catalog: str = "full") -> dict[str, Any]:
         if not isinstance(arguments, dict):
             return rpc_error(request_id, -32602, "Invalid params")
         available_names = {tool["name"] for tool in (TOOLS[:1] if catalog == "reduced" else TOOLS)}
-        handler = {"formula_hint": formula_hint, "unit_convert": unit_convert}.get(name)
+        handler = {"formula_hint": formula_hint, "calculator": calculator}.get(name)
         if name not in available_names:
             handler = None
         if handler is None:

@@ -28,7 +28,7 @@ class AsyncConfigTest {
         AppProperties properties = mock(AppProperties.class);
         when(properties.retrieval()).thenReturn(new AppProperties.Retrieval(
                 Duration.ofSeconds(3), Duration.ofSeconds(30),
-                1000, 10, 20, 0.35, 60, true));
+                1000, 10, 20, 0.35, 0.55, 0.45, 60, true));
         AsyncConfig config = new AsyncConfig(properties);
         ThreadPoolTaskExecutor executor = (ThreadPoolTaskExecutor) config.conversationStreamExecutor();
 
@@ -89,7 +89,7 @@ class AsyncConfigTest {
         AppProperties properties = mock(AppProperties.class);
         when(properties.retrieval()).thenReturn(new AppProperties.Retrieval(
                 Duration.ofSeconds(3), Duration.ofSeconds(30),
-                1000, 10, 20, 0.35, 60, true));
+                1000, 10, 20, 0.35, 0.55, 0.45, 60, true));
         return new AsyncConfig(properties);
     }
 

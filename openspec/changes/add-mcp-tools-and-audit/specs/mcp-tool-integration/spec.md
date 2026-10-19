@@ -69,6 +69,7 @@
 #### Scenario: 连接成功并整体替换工具缓存
 - **WHEN** 教师连接本班服务，远端在超时内返回合法初始化响应和完整工具清单，且探测期间配置版本未变化
 - **THEN** 系统 MUST 在一个短事务中删除旧缓存、写入全部新工具并标记服务已连接
+- **AND** 删除旧缓存 MUST 在插入可能同名的新工具前实际提交到当前事务的数据库操作序列
 - **AND** 教师随后读取工具列表 MUST 只得到此次发现的工具和 Schema
 
 #### Scenario: 连接期间配置被修改
@@ -118,9 +119,10 @@
 - **AND** 每次调用 MUST 使用服务端适配器从当前问题构造参数，不得让模型生成参数或自动重试
 
 #### Scenario: 确定性构造演示工具参数
-- **WHEN** 编排器调用 `formula_hint` 或问题包含受支持的单位换算表达式并调用 `unit_convert`
-- **THEN** `formula_hint` MUST 接收至多 500 个 Unicode code point 的当前问题作为 `query`，`unit_convert` MUST 接收代码解析得到的 `value`、`fromUnit` 和 `toUnit`
-- **AND** 未匹配、跨维度或白名单外单位 MUST 产生 `denied`，不得把问题交给模型补参数
+- **WHEN** 编排器调用 `formula_hint` 或问题包含可规范化的数学表达式并调用 `calculator`
+- **THEN** `formula_hint` MUST 接收至多 500 个 Unicode code point 的当前问题作为 `query`，`calculator` MUST 接收代码从纯表达式、固定自然语言外壳或受控中文幂/根号/运算词形态中完整提取并规范化的 `expression`
+- **AND** “计算2的20次幂” MUST 规范化为 `2 ** 20`；演示计算器 MUST 只允许绝对值不超过 100 的乘方指数
+- **AND** 超长、混入非表达式文本或包含白名单外语法的输入 MUST 产生 `denied`，不得把问题交给模型补参数或执行任意代码
 
 #### Scenario: 服务断开或适配器拒绝调用
 - **WHEN** 引用对应的服务存在但已断开，或参数无法通过服务端适配器校验
@@ -166,7 +168,7 @@
 #### Scenario: 教师查看本班审计
 - **WHEN** 教师请求审计列表且未指定数量
 - **THEN** 系统 MUST 按创建时间倒序返回当前班级最多 50 条记录
-- **AND** 每条记录 MUST 包含工具引用、调用用户、可选会话、状态、安全摘要和时间；成功结果摘要最多 200 个 Unicode code point，任一详情最多 512 个 Unicode code point，且不得包含 Token、Base URL、完整参数或原始结果
+- **AND** 每条记录 MUST 包含工具引用、调用用户 ID 与用户名、可选会话、状态、安全摘要、可空毫秒耗时和时间；成功结果摘要最多 200 个 Unicode code point，任一详情最多 512 个 Unicode code point，且不得包含 Token、Base URL、完整参数或原始结果
 
 #### Scenario: 审计数量超过上限
 - **WHEN** 教师请求超过 100 条审计或提交非法分页参数

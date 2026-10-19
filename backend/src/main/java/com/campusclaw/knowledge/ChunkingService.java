@@ -15,7 +15,7 @@ public class ChunkingService {
     private static final int HIERARCHY_MAX_PREFIX_CODE_POINTS = 240;
     private static final Pattern URL = Pattern.compile("(?i)https?://\\S+|www\\.\\S+");
     private static final Pattern EMAIL = Pattern.compile("(?i)[\\p{L}0-9._%+-]+@[\\p{L}0-9.-]+\\.[A-Z]{2,}");
-    private static final Pattern HEADING = Pattern.compile("(?m)^(#{1,3})[ \\t]+.+$");
+    private static final Pattern HEADING = Pattern.compile("^(#{1,3})[ \\t]+.+$");
 
     public List<ChunkDraft> chunkEntries(List<SourceEntry> entries, ChunkingOptions requested) {
         ChunkingOptions options = requested.validated();
@@ -94,11 +94,25 @@ public class ChunkingService {
     }
 
     private List<HierarchySection> hierarchySections(String text) {
-        Matcher matcher = HEADING.matcher(text);
         List<Heading> headings = new ArrayList<>();
-        while (matcher.find()) {
-            headings.add(new Heading(matcher.group(1).length(), matcher.group(),
-                    text.codePointCount(0, matcher.start()), text.codePointCount(0, matcher.end())));
+        MarkdownFenceTracker fences = new MarkdownFenceTracker();
+        int lineStart = 0;
+        while (lineStart <= text.length()) {
+            int newline = text.indexOf('\n', lineStart);
+            int lineEnd = newline < 0 ? text.length() : newline;
+            String line = text.substring(lineStart, lineEnd);
+            if (!fences.isOpen()) {
+                Matcher matcher = HEADING.matcher(line);
+                if (matcher.matches()) {
+                    headings.add(new Heading(matcher.group(1).length(), matcher.group(),
+                            text.codePointCount(0, lineStart), text.codePointCount(0, lineEnd)));
+                }
+            }
+            fences.consume(line);
+            if (newline < 0) {
+                break;
+            }
+            lineStart = newline + 1;
         }
         int total = text.codePointCount(0, text.length());
         if (headings.isEmpty()) {

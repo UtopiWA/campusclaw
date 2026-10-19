@@ -161,6 +161,20 @@ describe('AgentConfigView', () => {
     ].join('\n'))
   })
 
+  it('shows bound tools directly on each skill card', async () => {
+    agents.listSkills.mockResolvedValue([{
+      id: 5, name: '数学引导', triggerText: '方程', materialScope: '代数', instructions: '逐步提示。',
+      toolRefs: ['knowledge_search', 'formula_hint@demo'], enabled: true,
+    }])
+    const wrapper = mount(AgentConfigView, { global })
+    await flushPromises()
+    await wrapper.findAll('.config-tabs button')[1].trigger('click')
+
+    const summary = wrapper.find('.skill-tool-summary')
+    expect(summary.text()).toContain('知识检索 · knowledge_search')
+    expect(summary.text()).toContain('formula_hint@demo')
+  })
+
   it('loads an existing skill into fields and submits a complete update', async () => {
     agents.listSkills.mockResolvedValue([{
       id: 5, name: '阅读引导', triggerText: '阅读', materialScope: '语文', toolName: 'knowledge_search',
@@ -288,27 +302,36 @@ describe('AgentConfigView', () => {
     expect(wrapper.findAll('.config-actions .button').some((button) => button.text() === '停用')).toBe(true)
   })
 
-  it('shows discovered MCP tool schemas and audit summaries without exposing credentials', async () => {
+  it('separates MCP tools from audit metrics and shows usernames, Chinese tool names, and durations', async () => {
     mcp.listMcpServers.mockResolvedValue([{
       id: 21, name: 'demo', baseUrl: 'http://mcp-demo:8090/mcp', connected: true,
       hasAuth: true, toolCount: 1,
     }])
     mcp.listMcpTools.mockResolvedValue([{
-      id: 31, name: 'unit_convert', description: 'Convert supported units.',
-      inputSchema: { properties: { value: {}, fromUnit: {}, toUnit: {} }, required: ['value', 'fromUnit', 'toUnit'] },
+      id: 31, name: 'calculator', description: '安全计算数学表达式。',
+      inputSchema: { properties: { expression: {} }, required: ['expression'] },
     }])
     mcp.listMcpToolCalls.mockResolvedValue([{
-      id: 41, toolRef: 'unit_convert@demo', status: 'ok', detail: '2 km = 2000 m', createdAt: '2026-10-16T10:00:00Z',
+      id: 41, userId: 7, userName: 'student-a', conversationId: 19,
+      toolRef: 'calculator@demo', status: 'ok', detail: '(2 + 3) * 4 = 20', durationMs: 37,
+      createdAt: '2026-10-16T10:00:00Z',
     }])
 
     const wrapper = mount(AgentConfigView, { global })
     await flushPromises()
     await wrapper.findAll('.config-tabs button')[2].trigger('click')
 
-    expect(wrapper.text()).toContain('unit_convert')
-    expect(wrapper.text()).toContain('Convert supported units.')
-    expect(wrapper.text()).toContain('value*、fromUnit*、toUnit*')
-    expect(wrapper.text()).toContain('2 km = 2000 m')
+    expect(wrapper.find('.mcp-services-panel').exists()).toBe(true)
+    expect(wrapper.find('.mcp-audit').exists()).toBe(true)
+    expect(wrapper.text()).toContain('计算器')
+    expect(wrapper.text()).toContain('calculator')
+    expect(wrapper.text()).toContain('安全计算数学表达式。')
+    expect(wrapper.text()).toContain('expression*')
+    expect(wrapper.text()).toContain('student-a')
+    expect(wrapper.text()).toContain('37 ms')
+    expect(wrapper.text()).not.toContain('用户 #7')
+    expect(wrapper.text()).not.toContain('会话 #19')
+    expect(wrapper.text()).not.toContain('(2 + 3) * 4 = 20')
     expect(wrapper.text()).not.toContain('secret-token')
   })
 

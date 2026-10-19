@@ -30,6 +30,9 @@ def run(context) -> None:
     for audit in (require_mapping(ok_audit, "成功审计应为对象"),
                   require_mapping(denied_audit, "拒绝审计应为对象")):
         require_equal(audit.get("toolRef"), f"formula_hint@{server['name']}", "审计工具引用应完整")
+        require_equal(audit.get("userName"), student["username"], "审计应返回真实用户名")
+        require(isinstance(audit.get("durationMs"), int) and audit["durationMs"] >= 0,
+                "审计应返回非负调用耗时")
         require(isinstance(audit.get("detail"), str) and audit.get("detail"), "审计应包含脱敏摘要")
         require("token" not in audit and "baseUrl" not in audit and "arguments" not in audit,
                 "审计响应不得包含凭据、地址或完整参数")

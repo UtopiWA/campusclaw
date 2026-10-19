@@ -65,6 +65,11 @@ class McpSchemaMigrationTest {
                     WHERE table_schema = DATABASE() AND table_name = 'messages' AND column_name = 'tool_calls_json'
                     """)).isEqualTo(1);
             assertThat(stringValue(statement, "SELECT tool_calls_json FROM messages WHERE id = 1")).isNull();
+            assertThat(longValue(statement, """
+                    SELECT COUNT(*) FROM information_schema.columns
+                    WHERE table_schema = DATABASE() AND table_name = 'mcp_tool_calls'
+                      AND column_name = 'duration_ms'
+                    """)).isEqualTo(1);
 
             statement.executeUpdate("""
                     INSERT INTO mcp_servers(id, class_id, name, base_url, auth_token_ciphertext, connected,

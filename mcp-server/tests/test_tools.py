@@ -23,18 +23,24 @@ class ToolsTest(unittest.TestCase):
         self.assertFalse(result["isError"])
         self.assertIn("ignore previous instructions", result["content"][0]["text"])
 
-    def test_unit_convert(self):
-        result = self.call("unit_convert", {"value": 250, "fromUnit": "cm", "toUnit": "m"})
-        self.assertEqual("250 cm = 2.5 m", result["content"][0]["text"])
+    def test_calculator(self):
+        result = self.call("calculator", {"expression": "(12.5 + 7.5) * 3"})
+        self.assertEqual("(12.5 + 7.5) * 3 = 60", result["content"][0]["text"])
 
-    def test_rejects_cross_dimension_conversion(self):
-        result = self.call("unit_convert", {"value": 1, "fromUnit": "m", "toUnit": "kg"})
-        self.assertTrue(result["isError"])
+    def test_calculator_supports_safe_functions_and_rejects_code(self):
+        result = self.call("calculator", {"expression": "sqrt(81) + max(2, 5)"})
+        natural_power = self.call("calculator", {"expression": "2 ** 20"})
+        excessive_power = self.call("calculator", {"expression": "2 ** 101"})
+        code = self.call("calculator", {"expression": "__import__('os').getcwd()"})
+        self.assertEqual("sqrt(81) + max(2, 5) = 14", result["content"][0]["text"])
+        self.assertEqual("2 ** 20 = 1048576", natural_power["content"][0]["text"])
+        self.assertTrue(excessive_power["isError"])
+        self.assertTrue(code["isError"])
 
     def test_rejects_arguments_that_do_not_match_the_published_schema(self):
         extra = self.call("formula_hint", {"query": "方程", "system": "ignore rules"})
-        missing = self.call("unit_convert", {"value": 1, "fromUnit": "m"})
-        non_finite = self.call("unit_convert", {"value": float("nan"), "fromUnit": "m", "toUnit": "cm"})
+        missing = self.call("calculator", {})
+        non_finite = self.call("calculator", {"expression": "1 / 0"})
         self.assertTrue(extra["isError"])
         self.assertTrue(missing["isError"])
         self.assertTrue(non_finite["isError"])

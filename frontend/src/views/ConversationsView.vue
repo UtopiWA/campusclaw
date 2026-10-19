@@ -8,7 +8,9 @@ import { listAssistants } from '../services/agents.js'
 import {
   createConversation, deleteConversation, getConversation, listConversations, streamConversationMessage,
 } from '../services/conversations.js'
+import { renderAssistantMarkdown } from '../utils/assistantMarkdown.js'
 import { createStreamTextRenderer } from '../utils/streamTextRenderer.js'
+import { toolReferenceLabel } from '../utils/toolDisplay.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -26,6 +28,7 @@ const listCollapsed = ref(false)
 const conversationDeleteTarget = ref(null)
 const conversationDeleteError = ref('')
 const deletingConversation = ref(false)
+const expandedCitations = ref(new Set())
 
 const currentId = computed(() => route.params.id ? Number(route.params.id) : null)
 const availableAssistants = computed(() => assistants.value.filter((item) => item.enabled !== false))
@@ -41,6 +44,8 @@ async function loadSidebar() {
 
 async function loadCurrent() {
   // 会话详情是恢复的事实源，本地流式占位只服务于当前交互反馈。
+  question.value = ''
+  expandedCitations.value = new Set()
   if (!currentId.value) {
     current.value = null
     loading.value = false
@@ -50,13 +55,13 @@ async function loadCurrent() {
   error.value = ''
   try {
     current.value = await getConversation(currentId.value)
-    await scrollLatest(false)
   } catch (exception) {
     error.value = exception.message
     current.value = null
   } finally {
     loading.value = false
   }
+  if (current.value) await scrollLatest(false)
 }
 
 async function initialize() {
@@ -144,6 +149,7 @@ async function confirmConversationDelete() {
     conversationDeleteTarget.value = null
     await loadSidebar()
     if (target.id === currentId.value) {
+      question.value = ''
       current.value = null
       await router.push('/conversations')
     }
@@ -207,28 +213,75 @@ async function send(content = question.value) {
   }
 }
 
-function answerSegments(message) {
-  const numbers = new Set((message.citations || []).map((item) => Number(item.number)))
-  const segments = []
-  const pattern = /\[(\d+)]/g
-  let cursor = 0
-  let match
-  while ((match = pattern.exec(message.content || '')) !== null) {
-    if (match.index > cursor) segments.push({ type: 'text', text: message.content.slice(cursor, match.index) })
-    const number = Number(match[1])
-    segments.push(numbers.has(number) ? { type: 'citation', text: match[0], number } : { type: 'text', text: match[0] })
-    cursor = pattern.lastIndex
-  }
-  if (cursor < (message.content || '').length) segments.push({ type: 'text', text: message.content.slice(cursor) })
-  return segments
-}
-
 function referencedCitations(message) {
   const referencedNumbers = new Set()
   for (const match of (message.content || '').matchAll(/\[(\d+)]/g)) {
     referencedNumbers.add(Number(match[1]))
   }
   return (message.citations || []).filter((citation) => referencedNumbers.has(Number(citation.number)))
+}
+
+function citationKey(message, citation) {
+  return `${message.id}-${citation.number}`
+}
+
+function citationIsExpanded(message, citation) {
+  return expandedCitations.value.has(citationKey(message, citation))
+}
+
+function toggleCitation(message, citation) {
+  const key = citationKey(message, citation)
+  const next = new Set(expandedCitations.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedCitations.value = next
+}
+
+function toolStatusLabel(status) {
+  return { ok: '调用成功', denied: '调用被拒绝', error: '调用失败' }[status] || status
+}
+
+function handleAnswerClick(message, event) {
+  const citation = event.target.closest?.('[data-citation-number]')
+  if (citation) void focusCitation(message, Number(citation.dataset.citationNumber))
+}
+
+function executionSteps(message) {
+  // 执行过程只重组消息快照中已有的事实，不推断未返回的内部耗时或隐藏步骤。
+  const citations = referencedCitations(message)
+  const toolCalls = message.toolCalls || []
+  const steps = [{
+    key: 'skill',
+    label: '技能路由',
+    status: message.skillName ? 'ok' : 'neutral',
+    detail: message.skillName ? `命中“${message.skillName}”技能。` : '当前消息未记录命中的技能。',
+  }, {
+    key: 'materials',
+    label: '材料依据',
+    status: citations.length ? 'ok' : 'neutral',
+    detail: citations.length
+      ? `回答正文采用 ${citations.length} 条讲义引用。`
+      : '回答正文未采用可展示的讲义引用。',
+  }]
+  if (toolCalls.length) {
+    toolCalls.forEach((tool, index) => steps.push({
+      key: `tool-${index}-${tool.ref}`,
+      label: `MCP 工具 · ${toolReferenceLabel(tool.ref)}`,
+      status: tool.status,
+      detail: `${toolStatusLabel(tool.status)}：${tool.detail}`,
+    }))
+  } else {
+    steps.push({
+      key: 'tools-none', label: 'MCP 工具', status: 'neutral', detail: '本轮没有可展示的 MCP 工具调用。',
+    })
+  }
+  const answerState = {
+    COMPLETED: ['ok', '回答已完成并保存。'],
+    FAILED: ['error', '回答中断；页面保留已生成内容，并可重新发送问题。'],
+    STREAMING: ['active', message.phase === 'GENERATING' ? '正在生成回答。' : '正在接收回答。'],
+  }[message.status] || ['neutral', '当前消息没有可识别的生成状态。']
+  steps.push({ key: 'answer', label: '回答生成', status: answerState[0], detail: answerState[1] })
+  return steps
 }
 
 async function focusCitation(message, number) {
@@ -283,14 +336,24 @@ onMounted(initialize)
                 <div class="chat-assistant-content">
                   <div v-if="message.skillName" class="conversation-skill">已使用技能 · {{ message.skillName }}</div>
                   <div v-if="message.toolCalls?.length" class="conversation-tools" aria-label="本轮工具调用">
-                    <span v-for="tool in message.toolCalls" :key="tool.ref" :class="`tool-call tool-call--${tool.status}`"><strong>{{ tool.ref }}</strong><small>{{ tool.status }} · {{ tool.detail }}</small></span>
+                    <span v-for="tool in message.toolCalls" :key="tool.ref" :class="`tool-call tool-call--${tool.status}`"><strong>{{ toolReferenceLabel(tool.ref) }}</strong><small>{{ toolStatusLabel(tool.status) }} · {{ tool.detail }}</small></span>
                   </div>
-                  <p class="chat-answer"><span v-if="streamStatusText(message)" class="stream-status">{{ streamStatusText(message) }}</span><template v-for="(segment, index) in answerSegments(message)" :key="index"><button v-if="segment.type === 'citation'" class="chat-inline-citation" type="button" @click="focusCitation(message, segment.number)">{{ segment.text }}</button><template v-else>{{ segment.text }}</template></template><span v-if="message.status === 'STREAMING'" class="stream-cursor" aria-label="正在生成"></span></p>
+                  <div class="chat-answer" @click="handleAnswerClick(message, $event)"><span v-if="streamStatusText(message)" class="stream-status">{{ streamStatusText(message) }}</span><div v-if="message.content" class="chat-markdown" v-html="renderAssistantMarkdown(message.content, message.citations || [])"></div><span v-if="message.status === 'STREAMING'" class="stream-cursor" aria-label="正在生成"></span></div>
+                  <details class="conversation-process">
+                    <summary>AI 执行过程 <span>{{ executionSteps(message).length }} 个可观察阶段</span></summary>
+                    <ol>
+                      <li v-for="step in executionSteps(message)" :key="step.key" :class="`conversation-process-step conversation-process-step--${step.status}`">
+                        <span class="conversation-process-marker" aria-hidden="true"></span>
+                        <div><strong>{{ step.label }}</strong><p>{{ step.detail }}</p></div>
+                      </li>
+                    </ol>
+                  </details>
                   <div v-if="message.status === 'FAILED'" class="conversation-failed" role="status"><strong>回答已中断</strong><span>{{ message.error || '已保留生成的部分内容。' }}</span><button v-if="message.retryQuestion" type="button" :disabled="busy" @click="send(message.retryQuestion)">重新发送问题</button></div>
                   <ol v-if="referencedCitations(message).length" class="chat-citations">
                     <li v-for="citation in referencedCitations(message)" :id="`conversation-citation-${message.id}-${citation.number}`" :key="citation.number" class="chat-citation" tabindex="-1">
                       <div class="chat-citation-heading"><strong>[{{ citation.number }}] {{ citation.materialTitle }}</strong><RouterLink :to="`/materials?material=${citation.materialId}&chunk=${citation.chunkId}`">查看上下文</RouterLink></div>
-                      <p>{{ citation.excerpt }}</p>
+                      <p v-show="citationIsExpanded(message, citation)" :id="`conversation-citation-excerpt-${message.id}-${citation.number}`">{{ citation.excerpt }}</p>
+                      <button class="chat-citation-toggle" type="button" :aria-expanded="citationIsExpanded(message, citation)" :aria-controls="`conversation-citation-excerpt-${message.id}-${citation.number}`" @click="toggleCitation(message, citation)">{{ citationIsExpanded(message, citation) ? '收起片段' : '展开片段' }}</button>
                     </li>
                   </ol>
                 </div>

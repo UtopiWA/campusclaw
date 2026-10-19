@@ -64,6 +64,8 @@ app:
     default-limit: ${RETRIEVAL_DEFAULT_LIMIT:10}
     max-limit: ${RETRIEVAL_MAX_LIMIT:20}
     vector-threshold: ${RETRIEVAL_VECTOR_THRESHOLD:0.35}
+    answer-strong-vector-threshold: ${RETRIEVAL_ANSWER_STRONG_VECTOR_THRESHOLD:0.55}
+    answer-corroborated-vector-threshold: ${RETRIEVAL_ANSWER_CORROBORATED_VECTOR_THRESHOLD:0.45}
     rrf-k: ${RETRIEVAL_RRF_K:60}
     initialize-vector-store: ${RETRIEVAL_INITIALIZE_VECTOR_STORE:true}
   mcp:

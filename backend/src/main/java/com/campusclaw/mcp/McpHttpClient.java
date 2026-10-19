@@ -1,6 +1,7 @@
 package com.campusclaw.mcp;
 
 import com.campusclaw.config.McpProperties;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -10,6 +11,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -85,9 +87,14 @@ public class McpHttpClient {
 
     private JsonNode rpc(String endpoint, String token, int id, String method, Map<String, Object> params) {
         try {
+            // Python BaseHTTPRequestHandler 不解析 chunked 请求体，固定字节正文可确保发送准确 Content-Length。
+            byte[] requestBody = objectMapper.writeValueAsBytes(
+                    Map.of("jsonrpc", "2.0", "id", id, "method", method, "params", params));
             JsonNode response = builder.build().post().uri(endpoint)
                     .header("Authorization", "Bearer " + token)
-                    .body(Map.of("jsonrpc", "2.0", "id", id, "method", method, "params", params))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .contentLength(requestBody.length)
+                    .body(requestBody)
                     .retrieve().body(JsonNode.class);
             if (response == null || !"2.0".equals(response.path("jsonrpc").asText())
                     || response.path("id").asInt(Integer.MIN_VALUE) != id || response.has("error")
@@ -95,7 +102,7 @@ public class McpHttpClient {
                 throw new McpRemoteException("Invalid JSON-RPC response");
             }
             return response.path("result");
-        } catch (RestClientException exception) {
+        } catch (JsonProcessingException | RestClientException exception) {
             throw new McpRemoteException("MCP request failed", exception);
         }
     }

@@ -12,6 +12,7 @@ import {
   listMcpServers, listMcpToolCalls, listMcpTools, updateMcpServer,
 } from '../services/mcp.js'
 import { buildSkillSource, parseSkillSource } from '../utils/skillSource.js'
+import { toolDisplayName, toolReferenceLabel } from '../utils/toolDisplay.js'
 
 const tab = ref('assistants')
 const assistants = ref([])
@@ -39,6 +40,24 @@ const skillDraft = reactive({
 const mcpDraft = reactive({ id: null, name: '', baseUrl: 'http://mcp-demo:8090', token: '' })
 const readyMaterials = computed(() => materials.value.filter((item) => item.indexStatus === 'READY'))
 const toolsForServer = (serverId) => mcpTools.value.filter((item) => item.serverId === serverId)
+const toolRefsForSkill = (skill) => skill.toolRefs?.length
+  ? skill.toolRefs
+  : [skill.toolName].filter(Boolean)
+const toolRefLabel = (ref) => toolReferenceLabel(ref)
+const auditActorLabel = (call) => call.userName || '未知用户'
+const auditStatusLabel = (status) => ({ ok: '成功', denied: '已拦截', error: '失败' }[status] || status)
+const formatDuration = (durationMs) => Number.isFinite(durationMs) ? `${durationMs} ms` : '未记录'
+const mcpAuditStats = computed(() => {
+  const measured = mcpCalls.value.filter((call) => Number.isFinite(call.durationMs))
+  const average = measured.length
+    ? Math.round(measured.reduce((total, call) => total + call.durationMs, 0) / measured.length)
+    : null
+  return {
+    total: mcpCalls.value.length,
+    success: mcpCalls.value.filter((call) => call.status === 'ok').length,
+    average,
+  }
+})
 const schemaSummary = (schema) => {
   const properties = schema?.properties ? Object.keys(schema.properties) : []
   const required = new Set(schema?.required || [])
@@ -291,7 +310,7 @@ onMounted(load)
         <button :class="{ active: tab === 'mcp' }" role="tab" type="button" @click="tab = 'mcp'">MCP 工具 <span>{{ mcpServers.length }}</span></button>
       </div>
 
-      <section class="content-card config-card" :aria-busy="loading">
+      <section class="config-panel" :class="{ 'content-card config-card': tab !== 'mcp' }" :aria-busy="loading">
         <div v-if="loading" class="empty-state"><p>正在加载配置…</p></div>
         <div v-else-if="tab === 'assistants'" class="config-grid">
           <article v-for="item in assistants" :key="item.id" class="config-item">
@@ -316,6 +335,11 @@ onMounted(load)
               <div class="config-item-title"><h2>{{ item.name }}</h2><span class="index-badge" :class="item.enabled ? 'index-badge--ready' : 'tag--muted'">{{ item.enabled ? '已启用' : '已停用' }}</span></div>
               <p>{{ item.instructions }}</p>
               <div class="config-tags"><span>触发词：{{ item.triggerText }}</span><span>范围：{{ item.materialScope }}</span></div>
+              <div class="skill-tool-summary" aria-label="已绑定工具">
+                <span>工具</span>
+                <code v-for="ref in toolRefsForSkill(item)" :key="ref">{{ toolRefLabel(ref) }}</code>
+                <small v-if="!toolRefsForSkill(item).length">未绑定</small>
+              </div>
             </div>
             <div class="config-actions">
               <label class="toggle-switch" :title="item.enabled ? '停用技能' : '启用技能'"><input type="checkbox" :checked="item.enabled" :disabled="togglingSkillIds.has(item.id)" :aria-label="`${item.enabled ? '停用' : '启用'}技能 ${item.name}`" @change="toggleSkill(item, $event.target.checked)" /><span></span></label>
@@ -325,7 +349,9 @@ onMounted(load)
           <div v-if="!skills.length" class="empty-state"><span><AppIcon name="layers" /></span><h3>还没有技能</h3><p>通过结构化文本添加一个确定性路由技能。</p></div>
         </div>
         <div v-else class="mcp-config">
-          <div class="config-grid">
+          <section class="content-card mcp-services-panel">
+            <header class="mcp-section-heading"><div><h2>MCP 服务与工具</h2><p>管理服务连接，并查看最近一次发现的工具定义。</p></div><span>{{ mcpTools.length }} 个已发现工具</span></header>
+            <div class="config-grid">
             <article v-for="item in mcpServers" :key="item.id" class="config-item">
               <div class="config-item-icon config-item-icon--skill"><AppIcon name="layers" /></div>
               <div class="config-item-body">
@@ -340,19 +366,28 @@ onMounted(load)
               </div>
               <div v-if="toolsForServer(item.id).length" class="mcp-tool-list" aria-label="已发现工具">
                 <article v-for="tool in toolsForServer(item.id)" :key="tool.id" class="mcp-tool-item">
-                  <strong>{{ tool.name }}</strong>
+                  <div><strong>{{ toolDisplayName(tool.name) }}</strong><code>{{ tool.name }}</code></div>
                   <p>{{ tool.description }}</p>
                   <small>输入：{{ schemaSummary(tool.inputSchema) }}（* 为必填）</small>
                 </article>
               </div>
             </article>
             <div v-if="!mcpServers.length" class="empty-state"><span><AppIcon name="layers" /></span><h3>还没有 MCP 服务</h3><p>登记服务并连接后，工具会出现在技能编辑器中。</p></div>
-          </div>
-          <section class="mcp-audit">
-            <h2>最近工具调用</h2>
+            </div>
+          </section>
+          <section class="content-card mcp-audit">
+            <header class="mcp-section-heading"><div><h2>最近工具调用</h2><p>仅展示当前班级最近 50 条安全审计记录。</p></div></header>
+            <div class="mcp-audit-metrics" aria-label="近期调用统计">
+              <article><span>近期调用</span><strong>{{ mcpAuditStats.total }}</strong><small>当前列表</small></article>
+              <article><span>成功调用</span><strong>{{ mcpAuditStats.success }}</strong><small>状态为成功</small></article>
+              <article><span>平均耗时</span><strong>{{ mcpAuditStats.average === null ? '—' : `${mcpAuditStats.average} ms` }}</strong><small>仅统计已记录项</small></article>
+            </div>
             <div class="mcp-audit-table" role="table" aria-label="MCP 调用审计">
+              <div v-if="mcpCalls.length" class="mcp-audit-row mcp-audit-row--head" role="row">
+                <span role="columnheader">时间</span><span role="columnheader">调用用户</span><span role="columnheader">工具</span><span role="columnheader">状态</span><span role="columnheader">耗时</span>
+              </div>
               <div v-for="call in mcpCalls" :key="call.id" class="mcp-audit-row" role="row">
-                <strong>{{ call.toolRef }}</strong><span :class="`tool-status tool-status--${call.status}`">{{ call.status }}</span><span>{{ call.detail }}</span><time>{{ new Date(call.createdAt).toLocaleString() }}</time>
+                <time role="cell">{{ new Date(call.createdAt).toLocaleString() }}</time><strong class="mcp-audit-actor" role="cell">{{ auditActorLabel(call) }}</strong><span class="mcp-audit-tool" role="cell"><strong>{{ toolDisplayName(call.toolRef) }}</strong><code>{{ call.toolRef }}</code></span><span role="cell" :class="`tool-status tool-status--${call.status}`">{{ auditStatusLabel(call.status) }}</span><span class="mcp-audit-duration" role="cell">{{ formatDuration(call.durationMs) }}</span>
               </div>
               <p v-if="!mcpCalls.length">暂无工具调用记录。</p>
             </div>
@@ -384,7 +419,7 @@ onMounted(load)
         <label class="switch-field"><input v-model="skillDraft.enabled" type="checkbox" /><span>创建后立即启用</span></label>
         <fieldset class="skill-tools"><legend>绑定工具</legend>
           <label><input v-model="skillDraft.toolRefs" type="checkbox" value="knowledge_search" /><span><strong>知识检索</strong><small>回答前检索智能体绑定的讲义（knowledge_search）</small></span></label>
-          <label v-for="tool in selectableToolRefs" :key="tool.ref"><input v-model="skillDraft.toolRefs" type="checkbox" :value="tool.ref" /><span><strong>{{ tool.ref }}</strong><small>{{ tool.description }}</small></span></label>
+          <label v-for="tool in selectableToolRefs" :key="tool.ref"><input v-model="skillDraft.toolRefs" type="checkbox" :value="tool.ref" /><span><strong>{{ toolReferenceLabel(tool.ref) }}</strong><small>{{ tool.description }}</small></span></label>
           <p v-if="!mcpTools.length">连接 MCP 服务后可选择外部工具。</p>
         </fieldset>
         <p v-if="error" class="feedback feedback--error" role="alert">{{ error }}</p>

@@ -45,17 +45,25 @@ public class RetrievalService {
 
     @Transactional(readOnly = true)
     public SearchResponse search(SearchRequest request, Long sessionClassId) {
-        return search(request, sessionClassId, null);
+        return search(request, sessionClassId, null, false);
+    }
+
+    /** 兼容问答使用高精度采信门；公开搜索仍保留宽召回。 */
+    @Transactional(readOnly = true)
+    public SearchResponse searchForAnswer(String query, Long sessionClassId, int limit) {
+        return search(new SearchRequest(query, SearchMode.HYBRID, limit, null),
+                sessionClassId, null, true);
     }
 
     /** 智能体链路使用服务端材料白名单；空集合明确表示没有可检索依据。 */
     @Transactional(readOnly = true)
     public SearchResponse searchBound(String query, Long sessionClassId, Set<Long> allowedMaterialIds, int limit) {
         return search(new SearchRequest(query, SearchMode.HYBRID, limit, null),
-                sessionClassId, Set.copyOf(allowedMaterialIds));
+                sessionClassId, Set.copyOf(allowedMaterialIds), true);
     }
 
-    private SearchResponse search(SearchRequest request, Long sessionClassId, Set<Long> allowedMaterialIds) {
+    private SearchResponse search(SearchRequest request, Long sessionClassId, Set<Long> allowedMaterialIds,
+                                  boolean answerEvidenceOnly) {
         String query = validateQuery(request.query());
         int limit = request.limit() == null ? properties.defaultLimit() : request.limit();
         if (limit < 1 || limit > properties.maxLimit()) {
@@ -70,7 +78,11 @@ public class RetrievalService {
                 : keyword(query, sessionClassId, allowedMaterialIds, limit * 3);
         List<ScoredId> vector = mode == SearchMode.KEYWORD ? List.of()
                 : vector(query, sessionClassId, allowedMaterialIds, limit * 3);
-        List<RankedId> ranked = rank(mode, keyword, vector).stream().limit(limit).toList();
+        var rankedCandidates = rank(mode, keyword, vector).stream();
+        if (answerEvidenceOnly) {
+            rankedCandidates = rankedCandidates.filter(this::acceptedForAnswer);
+        }
+        List<RankedId> ranked = rankedCandidates.limit(limit).toList();
         Map<Long, KnowledgeChunk> ready = loadReady(
                 ranked.stream().map(RankedId::id).toList(), sessionClassId, allowedMaterialIds);
         Map<Long, Material> materialMap = materials.findAllById(ready.values().stream()
@@ -94,6 +106,20 @@ public class RetrievalService {
                     item.keywordRank(), item.vectorScore(), item.vectorRank()));
         }
         return new SearchResponse(mode, hits.isEmpty() ? NO_EVIDENCE : null, List.copyOf(hits));
+    }
+
+    /**
+     * RRF 只负责排序。问答采信要求强向量相关性，或由关键词命中交叉确认的中等向量相关性。
+     */
+    private boolean acceptedForAnswer(RankedId candidate) {
+        if (candidate.vectorScore() == null) {
+            return false;
+        }
+        if (candidate.vectorScore() >= properties.answerStrongVectorThreshold()) {
+            return true;
+        }
+        return candidate.keywordScore() != null
+                && candidate.vectorScore() >= properties.answerCorroboratedVectorThreshold();
     }
 
     private List<ScoredId> keyword(String query, Long classId, Set<Long> allowedMaterialIds, int limit) {

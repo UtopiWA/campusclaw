@@ -49,15 +49,14 @@ class ConversationCitationNormalizerTest {
     }
 
     @Test
-    void omittedMarkerTieUsesEarlierRetrievalCandidateAndNoCandidatesStayUncited() {
+    void omittedMarkerWithNoTextualOverlapReturnsNoEvidence() {
         ConversationCitationNormalizer.NormalizedAnswer tied = normalizer.normalize(
                 "完全改写的回答", List.of(citation(3, 103L), citation(4, 104L)));
         ConversationCitationNormalizer.NormalizedAnswer noCandidates = normalizer.normalize(
                 "资料中未找到相关内容", List.of());
 
-        assertThat(tied.citations()).singleElement()
-                .satisfies(citation -> assertThat(citation.chunkId()).isEqualTo(103L));
-        assertThat(tied.content()).endsWith("[1]");
+        assertThat(tied.content()).isEqualTo("资料中未找到相关内容");
+        assertThat(tied.citations()).isEmpty();
         assertThat(noCandidates.content()).isEqualTo("资料中未找到相关内容");
         assertThat(noCandidates.citations()).isEmpty();
     }
