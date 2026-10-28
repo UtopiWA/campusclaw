@@ -1,7 +1,7 @@
 # CampusClaw
 
 - **价值主张：** 把分散的校本教学材料沉淀为按班级隔离、可持续复用的教研知识资产。
-- **核心场景：** 教师上传和管理教学材料，配置技能与智能体；同班师生可检索材料，并在可恢复的私人会话中获得带引用的流式回答。
+- **核心场景：** 教师上传和管理教学材料，配置技能、智能体与 MCP 工具；同班师生可检索材料，并在可恢复的私人会话中获得基于材料或工具结果的流式回答。
 - **本次不做：** 模型自主选择任意工具的开放式 Agent、作业提交与批改、注册与找回密码、SSO、多校多租户及生产级高可用。
 
 ## 技术栈
@@ -11,6 +11,14 @@
 - 数据：MySQL 8（正文、状态与 ngram 全文索引）、Qdrant（向量与编号 payload）
 - 工具服务：Python 3.13 标准库 HTTP Server、JSON-RPC 2.0 MCP 子集
 - 运行：Docker Compose、Nginx
+
+## 当前实现与学习入口
+
+当前页面分为“讲义与检索”(`/materials`)、“助手配置”(`/assistants`，仅教师) 和“助手对话”(`/conversations`)。MCP 服务、工具与调用审计位于助手配置页的“MCP 工具”页签；侧栏的“审计与统计”等课程后续入口仍待建设。
+
+Class 05 会话 change 已归档。当前还有三个活动 change：`add-mcp-tools-and-audit`（清单已完成，尚未归档）、`fix-markdown-aware-knowledge-chunking`（实现已完成，仍有 Testcontainers 集成复跑项）、`tighten-rag-evidence-acceptance`（清单已完成，尚未归档）。活动增量尚不能仅靠 `openspec/specs/` 了解，阅读时还应对照各自 `openspec/changes/`。
+
+代码学习从 [学习指南](../learning/README.md) 开始；具体可读 [检索排名与问答采信](../learning/topics/retrieval-ranking-and-evidence-gates.md)、[计算器 MCP 实现](../learning/modules/calculator-mcp.md) 和 [持久化对话链路](../learning/flows/chat-with-teaching-assistants.md)。
 
 ## 从零启动
 
@@ -29,7 +37,7 @@
    docker compose up --build
    ```
 
-4. 等待 MySQL、Qdrant、后端和前端健康后访问 <http://localhost:8080>。健康检查地址为 <http://localhost:8080/health>。
+4. 等待 MySQL、Qdrant、MCP 示例服务和后端通过健康检查、前端容器运行后访问 <http://localhost:8080>。应用健康检查地址为 <http://localhost:8080/health>；它检查应用与数据库，不代表所有外部模型和工具均可用。
 5. 停止服务但保留数据：
 
    ```powershell
@@ -40,7 +48,9 @@ MySQL 数据、上传文件和 Qdrant 向量分别保存在 `mysql-data`、`uplo
 
 Embedding 与 Chat 使用 OpenAI-compatible HTTP API。`.env` 中必须设置各自的 base URL、API key、模型名以及实际 embedding 维度；Qdrant collection 已存在但维度或距离不是 Cosine 时，后端会明确拒绝启动，不会自动删除或重建已有数据。
 
-Compose 还会启动仅在内部网络可见的 `mcp-demo:8090`。它与后端共用 `.env` 中的 `MCP_AUTH_TOKEN` 完成 Bearer 认证，但不会把端口发布到宿主机。后端启动时必须取得 `MCP_TOKEN_ENCRYPTION_KEY`；该值应由 `openssl rand -base64 32` 等方式生成，且不能与 JWT 密钥复用。
+Compose 还会启动仅在内部网络可见的 `mcp-demo:8090`，不会把端口发布到宿主机。示例服务读取 `.env` 中的 `MCP_AUTH_TOKEN`；教师登记该服务时提交相同值，后端加密保存并在调用时解密为 Bearer Header。后端启动时必须取得 `MCP_TOKEN_ENCRYPTION_KEY`；该值应由 `openssl rand -base64 32` 等方式生成，且不能与 JWT 密钥复用。
+
+更新既有 `.env` 时，应从 `.env.example` 合并新增变量，尤其是五项 `MCP_*` 配置，保留原有口令和模型配置。`DEMO_SEED_ENABLED=false` 可以继续使用；MCP 示例服务由 Compose 独立启动，教师登记服务、连接发现和绑定工具均不依赖种子开关。关闭种子且数据库为空时不会创建演示账号，需先在演示环境完成一次种子初始化。
 
 ## 使用 DBeaver 查看数据库
 
@@ -72,7 +82,7 @@ Compose 仅将 MySQL 暴露到宿主机回环地址，不会监听局域网网�
 
 ## 本地开发
 
-本地开发需要 Java 17、Maven 3.9+、Node.js 22+ 和 MySQL 8。先设置以下后端环境变量：
+本地开发需要 Java 17、Maven 3.9+、Node.js 22+、MySQL 8 和可访问的 Qdrant。默认 Compose 不向宿主机发布 Qdrant 端口，以下 `localhost:6333` 假设你已另行提供本机可访问的 Qdrant；若全部使用 Compose，直接采用前面的启动方式。先设置以下后端环境变量：
 
 ```powershell
 $env:DB_URL = "jdbc:mysql://localhost:3306/campusclaw?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC"
@@ -130,7 +140,7 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 | `POST /api/materials/{id}/index/rebuild` | 教师以 AUTO/CUSTOM/HIERARCHY 重建索引 |
 | `POST /api/materials/{id}/processing/retry` | 教师重新提交可重试的失败材料 |
 | `POST /api/retrieval/search` | keyword/vector/hybrid 可追溯检索，默认 hybrid |
-| `POST /api/ask` | 固定 hybrid 前 4 条依据的问答与引用 |
+| `POST /api/ask` | hybrid 排名后通过问答采信门的至多 4 条依据，非流式问答与引用 |
 | `GET/POST /api/skills` | 列出技能；教师从结构化原文创建技能 |
 | `GET/PUT/DELETE /api/skills/{id}` | 读取、更新或由教师删除本班技能 |
 | `GET/POST /api/assistants` | 列出智能体；教师创建完整智能体配置 |
@@ -150,9 +160,28 @@ Vite 将 `/api` 和 `/health` 代理到 `http://localhost:8081`，无需配置�
 
 检索的 `query` 为 1～1000 个 Unicode 字符，`limit` 为 1～20。keyword 仅依赖 MySQL；vector 和 hybrid 在嵌入或 Qdrant 不可用时返回脱敏 503。无命中始终返回 200、空 `hits` 与“资料中未找到相关内容”；问答在此分支不会调用 Chat。回答只保留实际引用的候选，并按正文首次出现顺序从 1 连续编号；前端可直接展开引用摘录，也可跳转到材料页突出目标切片及相邻上下文。Qdrant payload 不保存正文，point ID、payload `chunk_id` 与 MySQL chunk ID 保持一致。
 
+## 材料切分与问答采信
+
+上传的 UTF-8 文本先按 Markdown 一级到三级标题分节，同节的说明、公式与段落在 1000 个 Unicode code point 内装入 `knowledge_entries`，再由 AUTO/CUSTOM/HIERARCHY 生成检索 chunks。代码围栏和独立成行的 `$$`、`\[`/`\]` 会保护内部空行与伪标题；长度上限仍可能切开超长内容。已有材料的“重建索引”只重建 chunks，不重新解析 entries；旧材料要采用新解析规则，需要重新上传。
+
+直接搜索与生成回答使用不同门槛：
+
+| 配置 | 默认值 | 作用 |
+| --- | --- | --- |
+| `RETRIEVAL_VECTOR_THRESHOLD` | `0.35` | 向量宽召回；直接搜索可展示这些候选 |
+| `RETRIEVAL_ANSWER_STRONG_VECTOR_THRESHOLD` | `0.55` | 问答接受强向量候选，无须 keyword 同时命中 |
+| `RETRIEVAL_ANSWER_CORROBORATED_VECTOR_THRESHOLD` | `0.45` | 问答接受 keyword 与 vector 同一 chunk 双路命中的中等向量候选 |
+| `RETRIEVAL_RRF_K` | `60` | hybrid 的名次融合平滑常数，不是相关性门槛 |
+
+`/api/ask` 与智能体材料检索在 RRF 排名后先过滤弱候选，再取至多四条；keyword 单路不作为生成依据。配置要求 `宽召回阈值 <= 双路阈值 <= 强向量阈值`，错误顺序会拒绝启动。上述值是未经本项目标注集校准的经验起点，不能保证每条显式引用在语义上都支持回答；当前没有问题重写、reranker 或逐事实蕴含核验。
+
 ## MCP 工具配置、凭据与排障
 
 教师在 `/assistants` 的“MCP 工具”页签登记服务。Base URL 只接受 `http`/`https`，不能包含用户信息、查询参数或片段，目标主机还必须精确出现在 `MCP_ALLOWED_HOSTS` 中；后端会将地址规范化为以 `/mcp` 结尾。开发环境若单独启动 Python 服务，可先设置 `MCP_AUTH_TOKEN` 和可选的 `MCP_PORT`，运行 `python mcp-server/server.py`，再把允许主机和登记地址改为本机地址。Compose 环境应使用内部地址 `http://mcp-demo:8090`。
+
+示例服务实际提供“公式提示”(`formula_hint`) 和“计算器”(`calculator`) 两个工具。连接成功只会发现工具，使用时还需创建并启用技能、选择工具，再绑定到智能体。若只需数学计算，技能仅选择 `calculator@服务名`；同时选择 `knowledge_search` 才会在命中该技能后检索绑定讲义。
+
+例如，在绑定计算器技能的智能体中询问“计算2的20次幂”或“请计算 sqrt(81) + 2 ** 5”。共享表达式适配器为技能兜底匹配并构造 `{expression}`，Python 服务以受限算术 AST 求值；模型仅根据工具结果组织回答。前者的工具结果为 `1048576`，后者为 `41`。多个技能同分时仍按技能 ID 选一项，因此应从“AI 执行过程”确认实际技能，再从正文前工具摘要和教师审计确认调用，不能只看回答是否正确。
 
 Token 只在创建或显式替换时提交。后端以随机 12 字节 IV 和 AES-256-GCM 保存 `v1:` 版本密文，接口只返回 `hasAuth`。编辑时 Token 留空会保留原值。`MCP_TOKEN_ENCRYPTION_KEY` 不能直接轮换：当前版本没有批量重加密流程；更换密钥前必须先用旧密钥解密并重新加密所有已有凭据，否则连接会以脱敏的 503 失败。
 
@@ -171,7 +200,9 @@ Token 只在创建或显式替换时提交。后端以随机 12 字节 IV 和 AE
 
 教师可在 `/assistants` 通过技能名称、触发关键词/适用条件、资料范围、行为说明和工具复选项维护技能，并可直接在列表启停技能；前端将表单组装为既有技能文本，服务端仍负责完整解析与校验。名称包含“解题引导”且条件声明习题类别时，服务端用固定题目特征补充确定性命中，并强制只追问或给出至多一步提示，不输出最终答案。智能体同时配置名称、角色提示词、技能和 READY 材料绑定，启用/停用放在列表与编辑、删除并列。没有历史消息的智能体可删除，零消息空会话会自动清理；已有真实会话时应停用以保留历史。学生只能读取已启用智能体摘要，不能看到提示词和绑定。
 
-`/conversations` 是教师和学生共用的持久化助手对话入口。会话固定当前用户、班级和智能体；每轮提问会重新读取教师最新绑定，但单轮开始后使用不可变快照。用户消息先提交，随后只在绑定材料内执行检索。没有可靠依据时不调用模型，服务端以相同 SSE 流程返回固定无依据答复；有候选时，最终落库前仅保留正文实际采用的片段并按首次出现顺序从 `[1]` 重新编号，模型完全漏标时只补一条文本最匹配依据。SSE 解帧器按事件等待页面消费，正文按 Unicode 字符逐帧绘制，最终引用只在 `done` 后展示。历史会话可由本人在侧边栏删除。直接片段检索位于 `/materials` 的“讲义与检索”页面；旧 `/search` 会跳转到该页面。
+`/conversations` 是教师和学生共用的持久化助手对话入口。会话固定当前用户、班级和智能体；每轮提问会重新读取教师最新绑定，但单轮开始后使用不可变快照。用户消息先提交，再按选中技能决定是否检索绑定材料并调用工具。已采信材料或安全工具结果任一存在即可生成，两者均无时不调用 Chat，仍通过 SSE 返回固定无依据答复。材料候选在最终落库前按正文采用情况过滤，并按首次出现顺序从 `[1]` 编号；模型完全漏标时，只有存在规范化文本重合才补一条依据，零重合则保存固定拒答与空引用。
+
+正文支持标准 Markdown 和 KaTeX：`$...$`、`\(...\)` 为行内公式，`$$...$$`、`\[...\]` 为块公式；原始 HTML 被禁用。引用卡片只在 `done` 后显示，片段正文一律默认折叠，点击可逐卡片展开当前保存的完整摘录，或查看材料上下文。进入已有会话会定位最新消息，切换或删除会话会清空未发送草稿。历史会话可由本人在侧边栏删除；旧 `/search` 会跳转到讲义与检索页。
 
 正常 SSE 协议为：
 
@@ -183,7 +214,7 @@ event: done   data: {messageId}             # 助手消息事务提交后发送
 
 流开始后失败时不发送 `done`：已有正文会尽力保存为 `FAILED` 并发送脱敏 `error`，没有正文则不创建空助手消息。前端保留部分回答并提供重试；完成后与刷新时均从服务端详情恢复事实状态。旧 `/api/ask` 仍保持非流式、无命中不调用 Chat 的原语义。
 
-技能的 `工具` 字段现在可以包含有序的多个引用：内置检索使用 `knowledge_search`，外部工具使用 `工具名@服务名`。中英文逗号、顿号、分号、竖线和换行都会被规范化并按首次出现顺序去重。保存技能时，所有 MCP 引用必须指向本班已连接服务的已发现工具。每轮对话仍先检索材料，再按技能顺序串行调用工具；模型不负责选工具或生成参数，调用也不会自动重试。只要材料引用或经过过滤的工具结果任一可用，就会调用 Chat；只有工具依据时 `citations=[]`，正文中的伪 `[n]` 会被移除。
+技能的 `工具` 字段可以包含有序的多个引用：内置检索使用 `knowledge_search`，外部工具使用 `工具名@服务名`。中英文逗号、顿号、分号、竖线和换行都会被规范化并按首次出现顺序去重。保存技能时，所有 MCP 引用必须指向本班已连接服务的已发现工具。未命中技能时默认检索绑定材料；命中技能后仅当其包含 `knowledge_search` 才检索，然后串行调用该技能的 MCP 引用。模型不负责选工具或生成参数，调用也不会自动重试；纯工具依据时 `citations=[]`，正文中的伪 `[n]` 会被移除。
 
 `meta.toolCalls` 仅含 `ref/status/detail` 安全摘要，没有 MCP 引用时整个字段省略。相同摘要会写入助手消息的 `tool_calls_json`，因此 `done` 后重新加载或刷新页面仍能恢复。原始工具输出先按 1200 个 Unicode code point 截断并检查常见指令注入模式；命中后整段替换并标为 `denied`，危险原文不会进入模型、SSE、消息或审计。
 
@@ -210,10 +241,11 @@ python apitest/run_all.py
 - 桌面端：232px 侧边栏、60px 顶栏、浅灰工作区与白色内容卡片。
 - 中等宽度：侧边栏收缩为 76px 图标栏，图标保留可访问名称。
 - 手机端：隐藏侧栏，保留移动品牌顶栏，内容和操作纵向排列。
-- 作业和审计等尚未实现菜单明确显示“待建设”，不作为空链接。
+- 作业和全站“审计与统计”等尚未实现菜单明确显示“待建设”，不作为空链接；MCP 调用审计在助手配置页内可用。
 - `.md` 在线查看只展示源文本，不执行用户文件中的 HTML。
 - “讲义与检索”页同时承载直接片段检索和材料查看/下载；教师在同页看到上传、重命名、重建和删除操作。
 - 智能体配置页使用结构化技能表单和列表启停开关；“助手对话”使用服务端会话列表、独立滚动消息区、固定底部输入器以及移动端抽屉。
+- MCP 服务/工具与最近调用审计分为独立面板；审计显示时间、真实用户名、中文工具名、状态和实测耗时。协议没有提供 Token usage，页面不估算 Token 消耗。
 
 ## 验证
 
@@ -233,7 +265,7 @@ openspec validate --all --strict
 python apitest/run_all.py
 ```
 
-后端集成测试使用 Testcontainers 启动真实 MySQL 8，因此运行完整测试时 Docker 必须可用。Docker 不可用时只能验证不依赖数据库的单元、MockMvc 和网关测试，不能据此宣称 V5 迁移或端到端会话已经通过。
+后端集成测试使用 Testcontainers 启动真实 MySQL 与 Qdrant，因此运行完整测试时 Docker 必须可用，且本机测试进程必须能访问 Docker Engine。Compose 容器运行正常不等于 Testcontainers 已能访问它。完整验证还包含 V5→V6、空库到 V7 的迁移；历史运行记录与当前仍待复跑项见 [学习进度](../learning/progress.md)。
 
 ## 安全说明
 
