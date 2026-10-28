@@ -1,6 +1,9 @@
 # mcp-tool-integration Specification
 
-## ADDED Requirements
+## Purpose
+定义按班级隔离的 MCP HTTP 服务配置、加密凭据、连接发现、工具缓存、确定性调用、安全过滤与教师审计，使材料或安全工具结果可支撑会话回答，并保证失败、删除及消息恢复行为可验证且不泄露秘密。
+
+## Requirements
 
 ### Requirement: 最小 MCP HTTP 服务与部署
 系统 MUST 在仓库内提供可由 Compose 启动的独立 MCP HTTP 服务，以 Bearer Token 保护 JSON-RPC 2.0 的 `initialize`、`tools/list` 和 `tools/call`，并提供无需认证的健康检查。

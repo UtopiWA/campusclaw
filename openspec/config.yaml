@@ -1,13 +1,17 @@
 schema: spec-driven
 
 context: |
-  CampusClaw 是面向中小学班级场景的教研智能体平台，当前已具备账号登录、教师/学生角色权限、服务端班级隔离，以及教师上传教学材料并写入知识库的基础实现。
-  当前行为基线由 openspec/specs 下的主规格维护；已完成 change 保存在 openspec/changes/archive 中，仅用于追溯。
-  平台支持材料上传、同班在线查看与原文件下载；教师可以管理材料，学生保持只读。
-  参考技术栈为 Vue 3、Vite、Java 17、Spring Boot 3、MySQL 8、Bearer JWT 和 Docker Compose；首版只解析 .txt 与 .md。
+  CampusClaw 是面向中小学班级场景的教研智能体平台，已具备账号登录、教师/学生权限、服务端班级隔离、材料与异步索引、可追溯检索、技能/智能体配置、私人持久化流式会话和 MCP 工具管理/调用/审计。
+  截至 2026-10-28，当前全部 change 已验收通过、同步并归档，清单全部完成，无遗留未完成验收项。行为基线由 openspec/specs 维护；实现范围与验收记录见 docs/project-status.md 及对应归档说明。
+  平台支持 .txt/.md 上传、同班在线查看与原文件下载；教师管理本班材料和配置，学生不能执行这些管理操作。直接检索位于 /materials，教师配置与 MCP 位于 /assistants，持久化问答位于 /conversations，旧 /search 重定向至材料页。
+  技术栈为 Vue 3、Vite、Java 17、Spring Boot 3、MySQL 8、Qdrant、Bearer JWT、Python MCP 示例服务和 Docker Compose；保持既有 HTTP JSON、SSE 和迁移兼容。
+  问答材料在 RRF 后、取前四条之前应用 0.55 强向量或 0.45 双路确认门；直接搜索仍采用 0.35 向量宽召回。安全 MCP 结果可独立支持会话生成；材料与工具均无依据才生成前固定拒答。
+  技能与工具由服务端确定性选择，命中技能时由 knowledge_search 决定是否检索；模型不选工具或构造参数，MCP 无自动重试，摘要随 SSE 和消息快照恢复。
+  当前尚无完整作业发布/提交/批改、错题、知识点画像或学习计划业务，相关早期表和禁用菜单不等于功能已完成。
   班级是数据边界，所有业务读写都必须使用 Bearer JWT 标识用户在数据库中的最新 class_id；客户端不得指定或覆盖数据所属班级。
   密码必须哈希存储，数据库凭据、演示种子口令等敏感配置必须来自服务端环境变量。
   规约变更必须先于实现；实现完成后按 tasks.md 逐项验证，且不得提交真实密钥或生成数据。
+  仓库内文档只引用仓库内可交付文件，不依赖仓库外目录。
 
 rules:
   proposal:

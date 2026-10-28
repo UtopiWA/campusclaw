@@ -12,5 +12,5 @@
 
 - [x] 3.1 覆盖数学综合题块公式、围栏伪标题、超长 Unicode 和既有策略回归
 - [x] 3.2 运行聚焦测试、排除容器集成类的后端套件与 OpenSpec 严格校验
-- [ ] 3.3 在 Testcontainers 能取得有效 Docker 环境后复跑 MySQL/Qdrant 两个集成类
+- [x] 3.3 运行 MySQL/Qdrant 两个 Testcontainers 集成类（18 项通过，无失败/错误/跳过；见 [验收结果](README.md#验收结果)）
 - [x] 3.4 更新知识索引学习模块和学习进度

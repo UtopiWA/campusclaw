@@ -12,13 +12,11 @@
 - 工具服务：Python 3.13 标准库 HTTP Server、JSON-RPC 2.0 MCP 子集
 - 运行：Docker Compose、Nginx
 
-## 当前实现与学习入口
+## 当前实现与规约状态
 
 当前页面分为“讲义与检索”(`/materials`)、“助手配置”(`/assistants`，仅教师) 和“助手对话”(`/conversations`)。MCP 服务、工具与调用审计位于助手配置页的“MCP 工具”页签；侧栏的“审计与统计”等课程后续入口仍待建设。
 
-Class 05 会话 change 已归档。当前还有三个活动 change：`add-mcp-tools-and-audit`（清单已完成，尚未归档）、`fix-markdown-aware-knowledge-chunking`（实现已完成，仍有 Testcontainers 集成复跑项）、`tighten-rag-evidence-acceptance`（清单已完成，尚未归档）。活动增量尚不能仅靠 `openspec/specs/` 了解，阅读时还应对照各自 `openspec/changes/`。
-
-代码学习从 [学习指南](../learning/README.md) 开始；具体可读 [检索排名与问答采信](../learning/topics/retrieval-ranking-and-evidence-gates.md)、[计算器 MCP 实现](../learning/modules/calculator-mcp.md) 和 [持久化对话链路](../learning/flows/chat-with-teaching-assistants.md)。
+截至 2026-10-28，MCP、Markdown 切分和 RAG 采信三个 change 均已验收通过、同步至 `openspec/specs/` 并归档，当前无活动 change 或遗留未完成验收项。详细实现范围与验收记录见 [项目状态](docs/project-status.md)。
 
 ## 从零启动
 
@@ -265,7 +263,7 @@ openspec validate --all --strict
 python apitest/run_all.py
 ```
 
-后端集成测试使用 Testcontainers 启动真实 MySQL 与 Qdrant，因此运行完整测试时 Docker 必须可用，且本机测试进程必须能访问 Docker Engine。Compose 容器运行正常不等于 Testcontainers 已能访问它。完整验证还包含 V5→V6、空库到 V7 的迁移；历史运行记录与当前仍待复跑项见 [学习进度](../learning/progress.md)。
+后端集成测试使用 Testcontainers 启动真实 MySQL 与 Qdrant，因此运行完整测试时 Docker 必须可用，且本机测试进程必须能访问 Docker Engine。Compose 容器运行正常不等于 Testcontainers 已能访问它。当前 Testcontainers 1.20.3 在本机 Docker 29 上需要追加 `"-Dapi.version=1.44"` 才能完成握手。完整验证还包含 V5→V6、空库到 V7 的迁移；验收记录见 [项目状态](docs/project-status.md)。
 
 ## 安全说明
 

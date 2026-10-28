@@ -83,10 +83,10 @@
   - 验证 1：`docker compose config`
   - 验证 2：`rg -n "MCP_AUTH_TOKEN|MCP_TOKEN_ENCRYPTION_KEY|MCP_ALLOWED_HOSTS|MCP_CONNECT_TIMEOUT|MCP_READ_TIMEOUT|swagger-ui" README.md .env.example docker-compose.yml`
 
-## 9. 学习文档与最终检查
+## 9. 文档与最终检查
 
-- [x] 9.1 按 `learning/AGENTS.md` 复核文档结构，新增或拆分适合的 MCP 管理 flow、确定性调用 topic、连接/发现 module 和调试 walkthrough，并同步总览与进度；不得只在旧笔记追加摘要。
-  - 验证：`rg -n "MCP|工具调用|审计|连接发现" ..\learning`
+- [x] 9.1 完成 MCP 管理、确定性调用、连接发现、调试与整体状态的文档复核；归档时仓库内的功能与配置说明以 README 和主规格为入口。
+  - 验证：`rg -n "MCP|工具调用|审计|连接发现" README.md openspec/specs`
 - [x] 9.2 运行后端、MCP 服务和前端测试，确认 Class03～Class05 回归仍通过。
   - 验证 1：`mvn -f .\backend\pom.xml test`
   - 验证 2（`mcp-server/`）：`python -m unittest discover -s tests -v`
